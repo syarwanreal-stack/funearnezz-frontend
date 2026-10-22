@@ -17,7 +17,11 @@ Use Cloudflare Workers Builds with the deploy command `npx wrangler deploy` and 
 
 Supabase setup is intentionally deferred until the site design has been reviewed. Before production use, the database schema and RPCs must be aligned with the Worker endpoints and tested.
 
-The Worker will eventually require server-only secrets `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`. Add these through Cloudflare's secret settings only when we reach Stage 2. Never place the service-role key in `app.js`, HTML, or any public repository file, and never send it in chat.
+The Supabase project URL is set as the non-secret `SUPABASE_URL` Worker variable in `wrangler.toml`. Set the server-only key using Cloudflare Worker Secrets; never put it in `app.js`, HTML, or a public repository file. This Worker version sends the key as both `apikey` and `Authorization: Bearer`, so use a compatible legacy `service_role` JWT from Supabase API settings rather than a new-format `sb_secret_...` key. Rotate any key shared publicly or in chat. Run `npx wrangler secret put SUPABASE_SERVICE_ROLE_KEY` and paste the rotated compatible service-role key when prompted.
+
+Username-only registration uses an internal synthetic email address that the user never needs to enter. In Supabase Auth, disable email confirmation for this username/password flow; otherwise signup may require email verification. The form asks for password confirmation, but only the password is sent to the server.
+
+To create the admin account, register username `admin` through the site first, then promote that profile in Supabase SQL Editor after verifying it exists: `update public.profiles set role = 'admin' where username = 'admin';`. Do not store the initial admin password in source code or SQL.
 
 ## Important functionality status
 
