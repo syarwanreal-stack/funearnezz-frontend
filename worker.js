@@ -2,6 +2,7 @@
  * FunEarnEzz API — Cloudflare Workers + Supabase.
  * Required Worker secrets: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY.
  * Set FRONTEND_ORIGIN as a Worker variable. Never expose service-role key to browsers.
+ * Public registration always creates a regular user; provision admins separately in Supabase.
  *
  * Database schema is intentionally configured separately in Supabase. Expected tables:
  * profiles(id, username, role, balance, reserved_balance, disabled, created_at),
@@ -91,7 +92,7 @@ async function handle(request,env) {
       if(exists.length) return fail("Username sudah digunakan",409);
       const created=await sb(env,"/auth/v1/signup",{method:"POST",body:JSON.stringify({email:emailFor(username),password,data:{username}})});
       if(!created?.user?.id) return fail("Pendaftaran gagal");
-      const profile={id:created.user.id,username,role:username.toLowerCase()===(env.ADMIN_USERNAME||"syarwanreal").toLowerCase()?"admin":"user",balance:0,reserved_balance:0,disabled:false};
+      const profile={id:created.user.id,username,role:"user",balance:0,reserved_balance:0,disabled:false};
       await rest(env,"profiles","",{method:"POST",headers:{Prefer:"return=minimal"},body:JSON.stringify(profile)});
       if(created.access_token) return reply({ok:true,user:safeProfile(profile)},200,{...cors(request,env),"Set-Cookie":cookie(created.access_token)});
       return reply({ok:true,message:"Akun dibuat. Silakan login."},200,cors(request,env));

@@ -1,11 +1,9 @@
 /*
  * FunEarnEzz frontend.
- * Setelah backend punya URL HTTPS publik, isi API_BASE di bawah.
- * Jangan masukkan password, token rahasia, .env, atau kredensial admin di file ini.
+ * API dilayani oleh Cloudflare Worker pada origin yang sama.
+ * Isi SUPABASE_URL dan SUPABASE_SERVICE_ROLE_KEY sebagai Worker secrets di Cloudflare,
+ * bukan di file frontend ini. Jangan pernah mengirim service-role key ke browser.
  */
-const SUPABASE_URL = "";
-const SUPABASE_KEY = "";
-const API_BASE = "";
 
 const $ = (selector) => document.querySelector(selector);
 const state = { token: null, user: null, tasks: [], wallet: null, submissions: [], view: "overview", authMode: "login", busy: false };
@@ -40,7 +38,6 @@ function setConnection(kind, text) {
 }
 function getToken() { return state.token || sessionStorage.getItem("fe_token"); }
 function saveToken(token) { state.token = token; if (token) sessionStorage.setItem("fe_token", token); else sessionStorage.removeItem("fe_token"); }
-function apiURL(path) { return `${API_BASE.replace(/\/+$/, "")}${path.startsWith("/") ? path : `/${path}`}`; }
 async function api(path, options = {}) {
   const headers = new Headers(options.headers || {});
   const token = getToken();
@@ -135,7 +132,7 @@ function renderView(view) {
   $("#viewTitle").textContent = labels[state.view][1];
   setNotice("");
   if (state.view !== "overview" && !requireLogin()) return;
-  if (state.view === "overview") state.user ? renderOverview() : $("#viewContent").innerHTML = `<div class="welcome-panel"><div class="welcome-art">✦</div><div><h4>Selamat datang di FunEarnEzz</h4><p>Masuk atau buat akun untuk memuat saldo, tugas, dan riwayatmu dari backend.</p><div class="inline-actions"><button class="button button-primary" id="contentLogin">Masuk</button><button class="button button-outline" id="contentRegister">Buat akun</button></div></div></div><div class="summary-grid"><div class="summary-box"><span>Saldo tersedia</span><b>—</b><small>Memerlukan login</small></div><div class="summary-box"><span>Pengajuan tugas</span><b>—</b><small>Memerlukan login</small></div><div class="summary-box"><span>Status API</span><b id="apiSummary">${API_BASE ? "Memeriksa…" : "Belum diatur"}</b><small id="apiSummaryHint">${API_BASE ? "Mencoba health check" : "Atur URL API di app.js"}</small></div></div>`;
+  if (state.view === "overview") state.user ? renderOverview() : $("#viewContent").innerHTML = `<div class="welcome-panel"><div class="welcome-art">✦</div><div><h4>Selamat datang di FunEarnEzz</h4><p>Masuk atau buat akun untuk memuat saldo, tugas, dan riwayatmu dari backend.</p><div class="inline-actions"><button class="button button-primary" id="contentLogin">Masuk</button><button class="button button-outline" id="contentRegister">Buat akun</button></div></div></div><div class="summary-grid"><div class="summary-box"><span>Saldo tersedia</span><b>—</b><small>Memerlukan login</small></div><div class="summary-box"><span>Pengajuan tugas</span><b>—</b><small>Memerlukan login</small></div><div class="summary-box"><span>Status API</span><b id="apiSummary">${"Memeriksa…"}</b><small id="apiSummaryHint">${"Memakai Cloudflare Worker pada origin yang sama"}</small></div></div>`;
   else if (state.view === "tasks") renderTasks();
   else if (state.view === "submissions") renderSubmissions();
   else renderWithdraw();
@@ -148,7 +145,7 @@ function openAuth(mode) {
   $("#authSubtitle").textContent = registering ? "Daftar untuk mulai menggunakan dashboard reward." : "Lanjutkan aktivitas reward kamu.";
   $("#nameField").classList.toggle("hidden", !registering);
   $("#authName").required = registering;
-  $("#authIdentity").placeholder = "Masukkan username atau email";
+  $("#authIdentity").placeholder = "Masukkan username";
   $("#authPassword").autocomplete = registering ? "new-password" : "current-password";
   $("#authSubmit").innerHTML = registering ? "Buat akun <span>→</span>" : "Masuk <span>→</span>";
   $("#authSwitchText").innerHTML = registering ? 'Sudah punya akun? <button type="button" id="switchAuth">Masuk</button>' : 'Belum punya akun? <button type="button" id="switchAuth">Daftar gratis</button>';
@@ -194,18 +191,15 @@ async function onAuthSubmit(event) {
   const username = $("#authName").value.trim();
   const errorBox = $("#authError");
   errorBox.classList.add("hidden");
-  if (!API_BASE) { errorBox.textContent = "URL HTTPS backend belum diatur. Website belum bisa mendaftarkan atau memverifikasi akun."; errorBox.classList.remove("hidden"); return; }
+  
   state.busy = true; const submit = $("#authSubmit"); submit.disabled = true; submit.textContent = "Memproses…";
   try {
-    const payload = registering ? { username, email: identity.includes("@") ? identity : undefined, password } : { username: identity, email: identity.includes("@") ? identity : undefined, password };
+    const payload = registering ? { username, password } : { username: identity, password };
     const result = await api(registering ? "/api/auth/register" : "/api/auth/login", { method:"POST", body:JSON.stringify(payload) });
-    const token = result.token || result.accessToken || result.access_token || result.session?.access_token;
-    if (token) saveToken(token);
-    else if (result.user || result.id || result.username) {
-      // Backend yang tidak mengembalikan token mungkin memakai cookie; implementasi cookie harus disesuaikan server-side.
-      throw new Error("Respons API tidak memberikan token sesi yang dikenali. Periksa format respons backend.");
-    } else throw new Error("Respons login/register tidak memiliki token sesi yang dikenali.");
-    state.user = result.user || null;
+    // Cloudflare Worker memakai cookie HttpOnly; token tidak perlu disimpan di JavaScript.
+    saveToken(null);
+    if (!result.user) throw new Error("Respons autentikasi tidak menyertakan data akun.");
+    state.user = result.user;
     closeAuth(); $("#authForm").reset(); notify(registering ? "Pendaftaran berhasil." : "Login berhasil.");
     await loadDashboard();
   } catch (error) {
@@ -232,7 +226,7 @@ async function submitProof(taskId) {
     const body = new FormData(); body.append("taskId", String(taskId)); body.append("note", form.elements.note.value.trim()); body.append("proof", file);
     button.disabled = true; button.textContent = "Mengirim…";
     try {
-      await api("/api/tasks/submit", { method:"POST", body });
+      await api(`/api/jobs/${encodeURIComponent(taskId)}/submit`, { method:"POST", body });
       dialog.close(); notify("Bukti berhasil dikirim untuk diperiksa."); await loadDashboard(); renderView("submissions");
     } catch (error) { err.textContent = getMessage(error); err.classList.remove("hidden"); }
     finally { button.disabled = false; button.textContent = "Kirim untuk diperiksa →"; }
@@ -253,16 +247,23 @@ async function submitWithdrawal(event) {
   finally { button.disabled = false; button.textContent = "Kirim pengajuan penarikan →"; }
 }
 async function logout() {
-  try { if (API_BASE && getToken()) await api("/api/auth/logout", { method:"POST" }); }
+  try { if (state.user) await api("/api/auth/logout", { method:"POST" }); }
   catch (error) { console.warn("Logout server:", getMessage(error)); }
   saveToken(null); state.user = null; state.tasks = []; state.wallet = null; state.submissions = [];
   renderProfile(); renderView("overview"); notify("Sesi lokal sudah diakhiri.");
 }
-function restoreSession() {
-  const token = sessionStorage.getItem("fe_token");
-  if (!token) return;
-  state.token = token;
-  loadDashboard();
+async function restoreSession() {
+  try {
+    const result = await api("/api/me");
+    state.user = result.user || null;
+    if (state.user) await loadDashboard();
+    else { renderProfile(); renderView("overview"); }
+  } catch {
+    saveToken(null);
+    state.user = null;
+    renderProfile();
+    renderView("overview");
+  }
 }
 document.addEventListener("click", event => {
   const target = event.target.closest("button");
