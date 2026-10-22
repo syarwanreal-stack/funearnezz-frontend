@@ -88,7 +88,7 @@ const body = async req => {
 };
 const usernameOK = u => typeof u==="string" && /^[A-Za-z0-9_]{3,24}$/.test(u);
 const emailFor = u => u.toLowerCase()+"@"+AUTH_HOST;
-const safeProfile = p => p ? ({id:p.id, username:p.username, role:p.role, balance:Number(p.balance||0), reserved_balance:Number(p.reserved_balance||0), created_at:p.created_at}) : null;
+const isDisabled = p => Boolean(p?.disabled ?? p?.disable ?? false);\nconst safeProfile = p => p ? ({id:p.id, username:p.username, role:p.role, balance:Number(p.balance||0), reserved_balance:Number(p.reserved_balance||0), created_at:p.created_at}) : null;
 async function current(request, env) {
   const token = parseCookies(request)[COOKIE] || (request.headers.get("Authorization")||"").replace(/^Bearer\s+/i,"");
   if (!token) return null;
@@ -96,7 +96,7 @@ async function current(request, env) {
     const user = await sb(env, "/auth/v1/user", {headers:{Authorization:"Bearer "+token}});
     const rows = await rest(env,"profiles","id=eq."+encodeURIComponent(user.id)+"&select=*");
     const profile = rows?.[0];
-    if (!profile || profile.disabled) return null;
+    if (!profile || isDisabled(profile)) return null;
     return {user, profile, token};
   } catch { return null; }
 }
@@ -152,7 +152,7 @@ async function handle(request,env) {
       if(!usernameOK(username)||!password) return fail("Username atau password salah",401);
       const data=await sb(env,"/auth/v1/token?grant_type=password",{method:"POST",body:JSON.stringify({email:emailFor(username),password})});
       const rows=await rest(env,"profiles","id=eq."+encodeURIComponent(data.user.id)+"&select=*");
-      if(!rows[0]||rows[0].disabled) return fail("Akun tidak ditemukan atau dinonaktifkan",403);
+      if(!rows[0]||isDisabled(rows[0])) return fail("Akun tidak ditemukan atau dinonaktifkan",403);
       return reply({ok:true,user:safeProfile(rows[0])},200,{...cors(request,env),"Set-Cookie":cookie(data.access_token,Math.min(86400,Math.max(60,Number(data.expires_in)||3600)))});
     }
     if((path==="/api/logout"||path==="/api/auth/logout")&&method==="POST") return reply({ok:true},200,{...cors(request,env),"Set-Cookie":cookie("",0)});
@@ -250,7 +250,7 @@ async function handle(request,env) {
     if(path==="/api/admin/submissions"&&method==="GET") {await requireAdmin(request,env);return reply(await rest(env,"submissions","select=*&order=created_at.desc"),200,cors(request,env));}
     if(path==="/api/admin/withdrawals"&&method==="GET") {await requireAdmin(request,env);return reply(await rest(env,"withdrawals","select=*&order=created_at.desc"),200,cors(request,env));}
     if(path==="/api/admin/robux"&&method==="GET") {await requireAdmin(request,env);return reply(await rest(env,"robux_requests","select=*&order=created_at.desc"),200,cors(request,env));}
-    if(path==="/api/admin/users"&&method==="GET") {await requireAdmin(request,env);return reply(await rest(env,"profiles","select=id,username,role,balance,reserved_balance,disabled,created_at&order=created_at.desc"),200,cors(request,env));}
+    if(path==="/api/admin/users"&&method==="GET") {await requireAdmin(request,env);return reply(await rest(env,"profiles","select=*&order=created_at.desc"),200,cors(request,env));}
     if(path==="/api/admin/audit"&&method==="GET") {await requireAdmin(request,env);return reply(await rest(env,"audit_logs","select=*&order=created_at.desc&limit=200"),200,cors(request,env));}
     m=path.match(/^\/api\/admin\/(submissions|withdrawals|robux)\/([^/]+)\/review$/);
     if(m&&method==="POST") {
@@ -266,7 +266,7 @@ async function handle(request,env) {
     m=path.match(/^\/api\/admin\/users\/([^/]+)\/(adjust|toggle)$/);
     if(m&&method==="POST") {
       const s=await requireAdmin(request,env),b=await body(request);
-      if(m[2]==="toggle") {const rows=await rest(env,"profiles","id=eq."+encodeURIComponent(m[1]),{method:"PATCH",headers:{Prefer:"return=representation"},body:JSON.stringify({disabled:!!b.disabled})});await audit(env,s.user.id,"user.toggle",{id:m[1],disabled:!!b.disabled});return reply({ok:true,user:safeProfile(rows?.[0])},200,cors(request,env));}
+      if(m[2]==="toggle") {const rows=await rest(env,"profiles","id=eq."+encodeURIComponent(m[1]),{method:"PATCH",headers:{Prefer:"return=representation"},body:JSON.stringify({disable:!!b.disabled})});await audit(env,s.user.id,"user.toggle",{id:m[1],disabled:!!b.disabled});return reply({ok:true,user:safeProfile(rows?.[0])},200,cors(request,env));}
       const delta=Number(b.amount);if(!Number.isFinite(delta)||delta===0)return fail("Nominal penyesuaian tidak valid");
       const result=await sb(env,"/rest/v1/rpc/admin_adjust_balance",{method:"POST",body:JSON.stringify({p_user_id:m[1],p_amount:delta,p_reason:String(b.reason||"Admin adjustment").slice(0,200)})});
       await audit(env,s.user.id,"user.adjust_balance",{id:m[1],amount:delta});return reply({ok:true,result},200,cors(request,env));
