@@ -8,7 +8,23 @@
 const $ = (selector) => document.querySelector(selector);
 const state = { token: null, user: null, tasks: [], wallet: null, submissions: [], withdrawals: [], robux: [], view: "overview", authMode: "login", busy: false };
 const labels = { overview: ["YOUR ACCOUNT", "Ringkasan akun"], tasks: ["DISCOVER TASKS", "Daftar tugas"], submissions: ["YOUR ACTIVITY", "Riwayat pengajuan"], withdraw: ["PAYOUT REQUEST", "Penarikan saldo"], robux: ["ROBUX REDEMPTION", "Tukar Robux"], admin: ["ADMINISTRATION", "Admin panel"] };
-let toastTimer;
+let toastTimer, noticeModalTimer;
+function showRequestDialog(message) {
+  const dialog = $("#requestNoticeDialog");
+  $("#requestNoticeMessage").textContent = message;
+  if (!dialog.open) dialog.showModal();
+  clearTimeout(noticeModalTimer);
+  noticeModalTimer = setTimeout(() => { if (dialog.open) dialog.close(); }, 3000);
+}
+function closeRequestDialog() { clearTimeout(noticeModalTimer); const dialog = $("#requestNoticeDialog"); if (dialog.open) dialog.close(); }
+async function loadMaintenanceNotice() {
+  const banner=$("#maintenanceBanner"); if(!banner) return;
+  try { const data=await api("/api/maintenance"); if(!data.enabled) {banner.classList.add("hidden"); return;}
+    const reason=String(data.reason||"Sistem sedang dalam maintenance."); $("#maintenanceReasonText").textContent=reason;
+    const reopen=String(data.reopenAt||"").trim(); $("#maintenanceReopenText").textContent=reopen ? "Perkiraan dibuka kembali: "+new Date(reopen).toLocaleString("id-ID") : "Waktu pembukaan kembali belum ditentukan.";
+    banner.classList.remove("hidden");
+  } catch(error) { console.info("Pengumuman maintenance belum tersedia:",getMessage(error)); }
+}
 
 function escapeHTML(value) {
   return String(value ?? "").replace(/[&<>"']/g, char => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[char]));
@@ -202,6 +218,10 @@ async function renderAdmin() {
         <label class="field">Minimal Robux<input name="robuxMin" type="number" min="1" step="1" value="${escapeHTML(cfg.robuxMin ?? 10)}" required></label>
         <label class="field">Tarif Game Pass per Robux (Rp)<input name="gamepassRate" type="number" min="1" step="1" value="${escapeHTML(cfg.gamepassRate ?? 170)}" required></label>
         <label class="field">Tarif Username per Robux (Rp)<input name="usernameRate" type="number" min="1" step="1" value="${escapeHTML(cfg.usernameRate ?? 230)}" required></label>
+        <h4 class="form-section-title">Pengumuman maintenance</h4>
+        <label class="field">Status maintenance<select name="maintenanceEnabled"><option value="false" ${String(cfg.maintenanceEnabled ?? "false")==="true"?"selected":""}>Nonaktif</option><option value="true" ${String(cfg.maintenanceEnabled ?? "false")==="true"?"selected":""}>Aktif</option></select></label>
+        <label class="field">Alasan / pengumuman<textarea name="maintenanceReason" maxlength="1000" rows="3" placeholder="Contoh: Perbaikan sistem penarikan">${escapeHTML(cfg.maintenanceReason ?? "")}</textarea></label>
+        <label class="field">Perkiraan dibuka lagi<input name="maintenanceReopenAt" type="datetime-local" value="${escapeHTML(cfg.maintenanceReopenAt ?? "")}"><span class="field-hint">Opsional. Waktu ditampilkan sesuai zona waktu browser pengunjung.</span></label>
         <div id="adminSettingsError" class="form-error hidden" role="alert"></div>
         <button class="button button-primary" type="submit">Simpan pengaturan</button>
       </form>`;
@@ -218,7 +238,7 @@ async function submitRobux(event) {
   err.classList.add("hidden"); button.disabled=true; button.textContent="Mengirim…";
   try {
     const result=await api("/api/robux",{method:"POST",body:JSON.stringify(payload)});
-    notify(result.message || "Permintaan Robux dikirim.");
+    showRequestDialog((result.message || "Permintaan Robux berhasil dikirim.") + " Mohon tunggu, permintaan akan ditinjau dan diproses oleh admin.");
     await loadDashboard(); renderView("submissions");
   } catch(error) { err.textContent=getMessage(error); err.classList.remove("hidden"); }
   finally { button.disabled=false; button.textContent="Ajukan penukaran →"; }
@@ -236,8 +256,8 @@ async function submitAdminJob(event) {
 async function saveAdminSettings(event) {
   event.preventDefault(); if(state.user?.role!=="admin") return;
   const form=event.currentTarget, err=$("#adminSettingsError"), button=form.querySelector('button[type="submit"]');
-  const values={robuxMin:Number(form.elements.robuxMin.value),gamepassRate:Number(form.elements.gamepassRate.value),usernameRate:Number(form.elements.usernameRate.value)};
-  if(Object.values(values).some(value=>!Number.isSafeInteger(value)||value<1)){err.textContent="Semua nilai harus bilangan bulat positif.";err.classList.remove("hidden");return;}
+  const values={robuxMin:Number(form.elements.robuxMin.value),gamepassRate:Number(form.elements.gamepassRate.value),usernameRate:Number(form.elements.usernameRate.value),maintenanceEnabled:form.elements.maintenanceEnabled.value==="true",maintenanceReason:form.elements.maintenanceReason.value.trim(),maintenanceReopenAt:form.elements.maintenanceReopenAt.value};
+  if([values.robuxMin,values.gamepassRate,values.usernameRate].some(value=>!Number.isSafeInteger(value)||value<1)){err.textContent="Semua nilai tarif dan minimal Robux harus bilangan bulat positif.";err.classList.remove("hidden");return;}
   err.classList.add("hidden");button.disabled=true;
   try { await api("/api/admin/settings",{method:"POST",body:JSON.stringify(values)}); notify("Pengaturan berhasil disimpan."); await renderAdmin(); }
   catch(error){err.textContent=getMessage(error);err.classList.remove("hidden");}
@@ -413,7 +433,7 @@ async function submitWithdrawal(event) {
   button.disabled = true; button.textContent = "Mengirim…";
   try {
     await api("/api/withdrawals", { method:"POST", body:JSON.stringify({ method, amount, destination }) });
-    notify("Pengajuan penarikan dikirim."); await loadDashboard(); renderView("submissions");
+    showRequestDialog("Pengajuan penarikan berhasil dikirim. Mohon tunggu, permintaan akan ditinjau dan diproses oleh admin."); await loadDashboard(); renderView("submissions");
   } catch (error) { err.textContent = getMessage(error); err.classList.remove("hidden"); }
   finally { button.disabled = false; button.textContent = "Kirim pengajuan penarikan →"; }
 }
@@ -456,6 +476,8 @@ document.addEventListener("click", event => {
 });
 $("#authForm").addEventListener("submit", onAuthSubmit);
 $("#authDialog").addEventListener("click", event => { if (event.target === $("#authDialog")) closeAuth(); });
+$("#requestNoticeOk").addEventListener("click", closeRequestDialog);
+$("#requestNoticeDialog").addEventListener("click", event => { if (event.target === $("#requestNoticeDialog")) closeRequestDialog(); });
 document.addEventListener("submit", event => {
   if (event.target.id === "withdrawForm") submitWithdrawal(event);
   else if (event.target.id === "robuxForm") submitRobux(event);
@@ -463,4 +485,4 @@ document.addEventListener("submit", event => {
   else if (event.target.id === "adminSettingsForm") saveAdminSettings(event);
 });
 $("#year").textContent = new Date().getFullYear();
-renderProfile(); renderView("overview"); checkHealth(); restoreSession();
+renderProfile(); renderView("overview"); checkHealth(); loadMaintenanceNotice(); restoreSession();
