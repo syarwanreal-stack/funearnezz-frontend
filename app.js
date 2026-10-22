@@ -33,8 +33,8 @@ function setConnection(kind, text) {
   if (kind === "online") el.classList.add("online");
   if (kind === "offline") el.classList.add("offline");
   $("#connectionText").textContent = text;
-  $("#apiSummary").textContent = kind === "online" ? "Terhubung" : kind === "offline" ? "Offline" : "Belum diatur";
-  $("#apiSummaryHint").textContent = kind === "online" ? "Health check berhasil" : kind === "offline" ? "Periksa URL/API server" : "Atur URL API di app.js";
+  $("#apiSummary").textContent = kind === "online" ? "Backend siap" : kind === "offline" ? "Belum tersedia" : "Frontend siap";
+  $("#apiSummaryHint").textContent = kind === "online" ? "Health check backend berhasil" : kind === "offline" ? "Backend belum dikonfigurasi" : "Supabase disambungkan setelah desain disetujui";
 }
 function getToken() { return state.token || sessionStorage.getItem("fe_token"); }
 function saveToken(token) { state.token = token; if (token) sessionStorage.setItem("fe_token", token); else sessionStorage.removeItem("fe_token"); }
@@ -153,7 +153,17 @@ function openAuth(mode) {
   if (!$("#authDialog").open) $("#authDialog").showModal();
 }
 function closeAuth() { if ($("#authDialog").open) $("#authDialog").close(); }
-async function checkHealth() { try { await api("/api/health"); setConnection("online", "Supabase terhubung"); } catch (error) { setConnection("offline", "Supabase belum terhubung"); console.warn("Supabase check gagal:", getMessage(error)); } }
+async function checkHealth() {
+  try {
+    const health = await api("/api/health");
+    if (health.databaseConfigured) setConnection("online", "Backend siap");
+    else setConnection("ready", "Frontend siap · Supabase nanti");
+  } catch (error) {
+    // Desain frontend tetap bisa diuji meski backend belum disiapkan.
+    setConnection("ready", "Frontend siap · backend nanti");
+    console.info("Backend belum dikonfigurasi:", getMessage(error));
+  }
+}
 async function parseList(data, keys) {
   if (Array.isArray(data)) return data;
   for (const key of keys) if (Array.isArray(data?.[key])) return data[key];
