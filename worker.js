@@ -36,9 +36,12 @@ const cookie = (value, maxAge=60*60*24*7) => `${COOKIE}=${value}; HttpOnly; Secu
 const parseCookies = (request) => Object.fromEntries((request.headers.get("Cookie")||"").split(";").map(x=>x.trim()).filter(Boolean).map(x=>{const i=x.indexOf("=");return [x.slice(0,i),x.slice(i+1)];}));
 const sb = async (env, path, init={}) => {
   const base = env.SUPABASE_URL.replace(/\/$/,"");
+  const serverKey = env.SUPABASE_SERVICE_ROLE_KEY;
+  const authHeaders = { apikey: serverKey };
+  // Legacy service_role keys are JWTs; new sb_secret keys are API keys, not bearer JWTs.
+  if ((serverKey.match(/\./g) || []).length === 2) authHeaders.Authorization = `Bearer ${serverKey}`;
   const res = await fetch(base + path, { ...init, headers: {
-    apikey: env.SUPABASE_SERVICE_ROLE_KEY,
-    Authorization: `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
+    ...authHeaders,
     "Content-Type":"application/json",
     ...(init.headers||{})
   }});
