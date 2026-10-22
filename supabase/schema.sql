@@ -189,7 +189,7 @@ create or replace function public.create_withdrawal(
   p_user_id uuid, p_amount numeric, p_method text, p_destination text
 ) returns jsonb
 language plpgsql security definer set search_path = ''
-as $$
+as $fn_create_withdrawal$
 declare
   v_profile public.profiles%rowtype;
   v_withdrawal public.withdrawals%rowtype;
@@ -209,14 +209,15 @@ begin
   insert into public.wallet_transactions(user_id, amount, type, reason, reference_type, reference_id)
   values (p_user_id, -p_amount, 'withdrawal_reserved', 'Penarikan menunggu pemeriksaan', 'withdrawal', v_withdrawal.id::text);
   return to_jsonb(v_withdrawal);
-end; $$;
+end;
+$fn_create_withdrawal$;
 
 create or replace function public.create_robux_request(
   p_user_id uuid, p_method text, p_robux integer, p_username text,
   p_gamepass_url text, p_rate numeric, p_cost numeric
 ) returns jsonb
 language plpgsql security definer set search_path = ''
-as $$
+as $fn_create_robux_request$
 declare
   v_profile public.profiles%rowtype;
   v_request public.robux_requests%rowtype;
@@ -240,13 +241,14 @@ begin
   insert into public.wallet_transactions(user_id,amount,type,reason,reference_type,reference_id)
   values(p_user_id,-p_cost,'robux_reserved','Penukaran Robux menunggu pemeriksaan','robux',v_request.id::text);
   return to_jsonb(v_request);
-end; $$;
+end;
+$fn_create_robux_request$;
 
 create or replace function public.review_submission(
   p_submission_id bigint, p_status text, p_note text, p_admin_id uuid
 ) returns jsonb
 language plpgsql security definer set search_path = ''
-as $$
+as $fn_review_submission$
 declare
   v_item public.submissions%rowtype;
   v_reward numeric(14,2);
@@ -266,13 +268,14 @@ begin
   update public.submissions set status=p_status,review_note=left(coalesce(p_note,''),1000),
     reviewed_at=now() where id=v_item.id returning * into v_item;
   return to_jsonb(v_item);
-end; $$;
+end;
+$fn_review_submission$;
 
 create or replace function public.review_withdrawal(
   p_withdrawal_id bigint, p_status text, p_note text, p_admin_id uuid
 ) returns jsonb
 language plpgsql security definer set search_path = ''
-as $$
+as $fn_review_withdrawal$
 declare
   v_item public.withdrawals%rowtype;
 begin
@@ -297,13 +300,14 @@ begin
   update public.withdrawals set status=p_status,review_note=left(coalesce(p_note,''),1000),reviewed_at=now()
   where id=v_item.id returning * into v_item;
   return to_jsonb(v_item);
-end; $$;
+end;
+$fn_review_withdrawal$;
 
 create or replace function public.review_robux_request(
   p_robux_request_id bigint, p_status text, p_note text, p_admin_id uuid
 ) returns jsonb
 language plpgsql security definer set search_path = ''
-as $$
+as $fn_review_robux_request$
 declare
   v_item public.robux_requests%rowtype;
 begin
@@ -328,13 +332,14 @@ begin
   update public.robux_requests set status=p_status,review_note=left(coalesce(p_note,''),1000),reviewed_at=now()
   where id=v_item.id returning * into v_item;
   return to_jsonb(v_item);
-end; $$;
+end;
+$fn_review_robux_request$;
 
 create or replace function public.admin_adjust_balance(
   p_user_id uuid, p_amount numeric, p_reason text
 ) returns jsonb
 language plpgsql security definer set search_path = ''
-as $$
+as $fn_admin_adjust_balance$
 declare
   v_profile public.profiles%rowtype;
 begin
@@ -346,7 +351,8 @@ begin
   insert into public.wallet_transactions(user_id,amount,type,reason,reference_type,reference_id)
   values(p_user_id,p_amount,'admin_adjustment',left(coalesce(p_reason,'Penyesuaian admin'),200),'profile',p_user_id::text);
   return jsonb_build_object('user_id',v_profile.id,'balance',v_profile.balance);
-end; $$;
+end;
+$fn_admin_adjust_balance$;
 
 revoke all on function public.create_withdrawal(uuid,numeric,text,text) from public, anon, authenticated;
 revoke all on function public.create_robux_request(uuid,text,integer,text,text,numeric,numeric) from public, anon, authenticated;
