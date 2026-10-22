@@ -55,6 +55,29 @@ const sb = async (env, path, init={}) => {
   if (!res.ok) throw new Error(typeof data === "object" ? (data.message||data.msg||data.error_description||data.error||"Supabase request failed") : "Supabase request failed");
   return data;
 };
+// Admin Auth operations must use the server-side secret/service-role key, never the public key.
+const sbAdmin = async (env, path, init={}) => {
+  const base = env.SUPABASE_URL.replace(/\/$/,"");
+  const serverKey = env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!serverKey) throw new Error("Supabase server key is missing");
+  const headers = { apikey: serverKey };
+  // Legacy service-role JWTs also require Authorization; sb_secret_ keys authenticate via apikey.
+  if ((serverKey.match(/\./g) || []).length === 2) headers.Authorization = `Bearer ${serverKey}`;
+  const res = await fetch(base + path, { ...init, headers: {
+    ...headers,
+    "Content-Type":"application/json",
+    ...(init.headers||{})
+  }});
+  const raw = await res.text();
+  let data = null; try { data = raw ? JSON.parse(raw) : null; } catch { data = raw; }
+  if (!res.ok) {
+    const message = typeof data === "object" && data
+      ? (data.message || data.msg || data.error_description || data.error || "Supabase admin request failed")
+      : "Supabase admin request failed";
+    throw new Error(String(message).slice(0, 500));
+  }
+  return data;
+};
 const rest = (env, table, query="", init={}) => sb(env, `/rest/v1/${table}${query ? "?"+query : ""}`, init);
 const body = async req => { try { return await req.json(); } catch { return {}; } };
 const usernameOK = u => typeof u==="string" && /^[A-Za-z0-9_]{3,24}$/.test(u);
@@ -98,12 +121,19 @@ async function handle(request,env) {
       if(password.length<8||!/[A-Za-z]/.test(password)||!/[0-9]/.test(password)) return fail("Password minimal 8 karakter dan harus mengandung huruf serta angka");
       const exists=await rest(env,"profiles","username=ilike."+encodeURIComponent(username)+"&select=id");
       if(exists.length) return fail("Username sudah digunakan",409);
-      const created=await sb(env,"/auth/v1/signup",{method:"POST",body:JSON.stringify({email:emailFor(username),password,data:{username}})});
-      if(!created?.user?.id) return fail("Pendaftaran gagal");
-      const profile={id:created.user.id,username,role:"user",balance:0,reserved_balance:0,disabled:false};
+      // This app uses synthetic internal emails for username-only accounts. Public signup can
+      // fail with an Auth 500 when Supabase confirmation-email delivery is enabled. Create the
+      // account server-side as confirmed, using the secret key, so no email is sent.
+      const created=await sbAdmin(env,"/auth/v1/admin/users",{method:"POST",body:JSON.stringify({
+        email:emailFor(username),
+        password,
+        email_confirm:true,
+        user_metadata:{username}
+      })});
+      if(!created?.id) return fail("Pendaftaran gagal");
+      const profile={id:created.id,username,role:"user",balance:0,reserved_balance:0,disabled:false};
       await rest(env,"profiles","",{method:"POST",headers:{Prefer:"return=minimal"},body:JSON.stringify(profile)});
-      if(created.access_token) return reply({ok:true,user:safeProfile(profile)},200,{...cors(request,env),"Set-Cookie":cookie(created.access_token)});
-      return reply({ok:true,message:"Akun dibuat. Silakan login."},200,cors(request,env));
+      return reply({ok:true,message:"Akun berhasil dibuat. Silakan login."},201,cors(request,env));
     }
     if((path==="/api/login"||path==="/api/auth/login")&&method==="POST") {
       const b=await body(request), username=String(b.username||"").trim(), password=String(b.password||"");
@@ -207,6 +237,13 @@ async function handle(request,env) {
     return fail("Endpoint tidak ditemukan",404,cors(request,env));
   } catch(e) {
     const status=e.status||500;
+    // Keep credentials and request bodies out of logs; log only route, status, and upstream error message.
+    console.error("FunEarnEzz API request failed", {
+      path,
+      method,
+      status,
+      error: String(e?.message || "Unknown error").slice(0, 500)
+    });
     return reply({error:status===500?"Terjadi kesalahan server. Periksa konfigurasi Supabase dan skema tabel.":e.message},status,cors(request,env));
   }
 }
