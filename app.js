@@ -55,7 +55,7 @@ function getMessage(error) {
 }
 function statusLabel(status) {
   const value = String(status || "pending").toLowerCase();
-  if (["approved","accepted","success","completed"].includes(value)) return ["approved","Disetujui"];
+  if (["approved","accepted","success","completed","paid"].includes(value)) return ["approved","Disetujui"];
   if (["rejected","declined","failed"].includes(value)) return ["rejected","Ditolak"];
   return ["pending","Menunggu"];
 }
