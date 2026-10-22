@@ -27,7 +27,7 @@ begin
   loop
     execute format('drop function if exists public.%I(%s) cascade', f.proname, f.args);
   end loop;
-end
+end;
 $reset_funearnezz$;
 
 drop table if exists
