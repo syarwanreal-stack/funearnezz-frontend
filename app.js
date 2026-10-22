@@ -447,11 +447,20 @@ document.addEventListener("click", event => {
   if (target.dataset.view) { renderView(target.dataset.view); $("#workspace").scrollIntoView({ behavior:"smooth", block:"start" }); }
   if (target.dataset.goto) { renderView(target.dataset.goto); $("#workspace").scrollIntoView({ behavior:"smooth", block:"start" }); }
   if (target.dataset.submitTask) submitProof(target.dataset.submitTask);
-  if (target.id === "refreshButton") { checkHealth(); if (state.user) loadDashboard(); else notify("Health check dimulai."); }
+  if (target.id === "refreshButton") { checkHealth(); if (state.user) loadDashboard(); if (state.view === "admin" && state.user?.role === "admin") renderAdmin(); else if (!state.user) notify("Health check dimulai."); }
   if (target.id === "logoutButton") logout();
+  if (target.dataset.proofId) openProof(target.dataset.proofId);
+  if (target.dataset.adminReview) adminReview(target.dataset.adminReview, target.dataset.recordId, target.dataset.reviewStatus);
+  if (target.dataset.userToggle) adminToggle(target.dataset.userToggle, target.dataset.userDisabled === "true");
+  if (target.dataset.userAdjust) adminAdjust(target.dataset.userAdjust);
 });
 $("#authForm").addEventListener("submit", onAuthSubmit);
 $("#authDialog").addEventListener("click", event => { if (event.target === $("#authDialog")) closeAuth(); });
-document.addEventListener("submit", event => { if (event.target.id === "withdrawForm") submitWithdrawal(event); });
+document.addEventListener("submit", event => {
+  if (event.target.id === "withdrawForm") submitWithdrawal(event);
+  else if (event.target.id === "robuxForm") submitRobux(event);
+  else if (event.target.id === "adminJobForm") submitAdminJob(event);
+  else if (event.target.id === "adminSettingsForm") saveAdminSettings(event);
+});
 $("#year").textContent = new Date().getFullYear();
 renderProfile(); renderView("overview"); checkHealth(); restoreSession();
