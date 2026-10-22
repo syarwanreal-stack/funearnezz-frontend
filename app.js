@@ -6,8 +6,8 @@
  */
 
 const $ = (selector) => document.querySelector(selector);
-const state = { token: null, user: null, tasks: [], wallet: null, submissions: [], view: "overview", authMode: "login", busy: false };
-const labels = { overview: ["YOUR ACCOUNT", "Ringkasan akun"], tasks: ["DISCOVER TASKS", "Daftar tugas"], submissions: ["YOUR ACTIVITY", "Riwayat pengajuan"], withdraw: ["PAYOUT REQUEST", "Penarikan saldo"] };
+const state = { token: null, user: null, tasks: [], wallet: null, submissions: [], withdrawals: [], robux: [], view: "overview", authMode: "login", busy: false };
+const labels = { overview: ["YOUR ACCOUNT", "Ringkasan akun"], tasks: ["DISCOVER TASKS", "Daftar tugas"], submissions: ["YOUR ACTIVITY", "Riwayat pengajuan"], withdraw: ["PAYOUT REQUEST", "Penarikan saldo"], robux: ["ROBUX REDEMPTION", "Tukar Robux"], admin: ["ADMINISTRATION", "Admin panel"] };
 let toastTimer;
 
 function escapeHTML(value) {
@@ -76,6 +76,7 @@ function renderProfile() {
   $("#profileAvatar").textContent = user ? String(user.username || user.name || "FE").slice(0,2).toUpperCase() : "?";
   $("#sessionBadge").textContent = user ? "SUDAH MASUK" : "BELUM MASUK";
   $("#logoutButton").classList.toggle("hidden", !user);
+  $("#adminNav").classList.toggle("hidden", user?.role !== "admin");
 }
 function renderOverview() {
   const wallet = state.wallet || {};
@@ -105,14 +106,26 @@ function renderTasks() {
   }).join("")}</div>`;
 }
 function renderSubmissions() {
-  const rows = state.submissions;
+  const rows = [
+    ...state.submissions.map(row => ({ ...row, _kind: "Tugas" })),
+    ...state.withdrawals.map(row => ({ ...row, _kind: "Penarikan" })),
+    ...state.robux.map(row => ({ ...row, _kind: "Robux" })),
+  ].sort((a,b) => String(b.created_at||"").localeCompare(String(a.created_at||"")));
   if (!rows.length) {
-    $("#viewContent").innerHTML = emptyState("◷", "Belum ada pengajuan", "Pengajuan tugas yang kamu kirim akan muncul di sini beserta status pemeriksaannya.");
+    $("#viewContent").innerHTML = emptyState("◷", "Belum ada aktivitas", "Pengajuan tugas, penarikan, dan penukaran Robux akan tampil di sini.");
     return;
   }
   $("#viewContent").innerHTML = `<div class="stack">${rows.map(row => {
     const [statusClass, statusText] = statusLabel(row.status);
-    return `<article class="data-card"><div class="data-card-head"><div><h4>${escapeHTML(row.taskTitle || row.task_title || row.title || `Pengajuan #${row.id ?? "—"}`)}</h4><p>${escapeHTML(row.note || row.message || "Tidak ada catatan.")}</p></div><span class="status ${statusClass}">${statusText}</span></div><div class="meta-row"><span class="tag">ID: ${escapeHTML(row.id ?? "—")}</span><span class="tag">${escapeHTML(row.createdAt || row.created_at || row.date || "Tanggal tidak tersedia")}</span></div>${row.reviewNote || row.review_note ? `<p style="margin-top:10px">Catatan pemeriksa: ${escapeHTML(row.reviewNote || row.review_note)}</p>` : ""}</article>`;
+    const title = row._kind === "Tugas"
+      ? (row.taskTitle || row.task_title || row.title || `Pengajuan tugas #${row.id ?? "—"}`)
+      : row._kind === "Penarikan"
+        ? `Penarikan ${money(row.amount)} · ${row.method || "Metode"}`
+        : `Penukaran ${escapeHTML(row.robux ?? "")} Robux`;
+    const detail = row._kind === "Tugas" ? (row.note || "Tidak ada catatan.")
+      : row._kind === "Penarikan" ? (row.destination ? `Tujuan: ${row.destination}` : "Permintaan penarikan saldo")
+      : (row.username ? `Username Roblox: ${row.username}` : "Permintaan penukaran Robux");
+    return `<article class="data-card"><div class="data-card-head"><div><span class="tag">${row._kind}</span><h4>${escapeHTML(title)}</h4><p>${escapeHTML(detail)}</p></div><span class="status ${statusClass}">${statusText}</span></div><div class="meta-row"><span class="tag">ID: ${escapeHTML(row.id ?? "—")}</span><span class="tag">${escapeHTML(row.created_at || row.date || "Tanggal tidak tersedia")}</span></div>${row.review_note ? `<p style="margin-top:10px">Catatan pemeriksa: ${escapeHTML(row.review_note)}</p>` : ""}${row._kind === "Tugas" && row.proof_url ? `<div class="inline-actions"><button class="button button-outline" data-proof-id="${escapeHTML(row.id)}">Lihat bukti</button></div>` : ""}</article>`;
   }).join("")}</div>`;
 }
 function renderWithdraw() {
@@ -127,15 +140,22 @@ function renderWithdraw() {
 }
 function renderView(view) {
   state.view = view in labels ? view : "overview";
+  if (state.view === "admin" && state.user?.role !== "admin") {
+    state.view = "overview";
+    setNotice("Menu admin hanya tersedia untuk akun admin.", "error");
+    view = "overview";
+  }
   document.querySelectorAll(".nav-item").forEach(button => button.classList.toggle("active", button.dataset.view === state.view));
   $("#viewKicker").textContent = labels[state.view][0];
   $("#viewTitle").textContent = labels[state.view][1];
-  setNotice("");
+  if (view !== "admin") setNotice("");
   if (state.view !== "overview" && !requireLogin()) return;
   if (state.view === "overview") state.user ? renderOverview() : $("#viewContent").innerHTML = `<div class="welcome-panel"><div class="welcome-art">✦</div><div><h4>Selamat datang di FunEarnEzz</h4><p>Masuk atau buat akun untuk memuat saldo, tugas, dan riwayatmu dari backend.</p><div class="inline-actions"><button class="button button-primary" id="contentLogin">Masuk</button><button class="button button-outline" id="contentRegister">Buat akun</button></div></div></div><div class="summary-grid"><div class="summary-box"><span>Saldo tersedia</span><b>—</b><small>Memerlukan login</small></div><div class="summary-box"><span>Pengajuan tugas</span><b>—</b><small>Memerlukan login</small></div><div class="summary-box"><span>Status API</span><b id="apiSummary">${"Memeriksa…"}</b><small id="apiSummaryHint">${"Memakai Cloudflare Worker pada origin yang sama"}</small></div></div>`;
   else if (state.view === "tasks") renderTasks();
   else if (state.view === "submissions") renderSubmissions();
-  else renderWithdraw();
+  else if (state.view === "withdraw") renderWithdraw();
+  else if (state.view === "robux") renderRobux();
+  else if (state.view === "admin") renderAdmin();
 }
 function openAuth(mode) {
   state.authMode = mode === "register" ? "register" : "login";
@@ -185,6 +205,8 @@ async function loadDashboard() {
     state.user = me.user || me;
     state.tasks = await parseList(tasks, ["tasks","data","items"]);
     state.submissions = await parseList(submissions, ["submissions","data","items"]);
+    state.withdrawals = await parseList(submissions, ["withdrawals"]);
+    state.robux = await parseList(submissions, ["robux"]);
     state.wallet = wallet.wallet || wallet.data || wallet;
     renderProfile(); renderView(state.view); setNotice("Data akun berhasil dimuat dari backend.", "success");
   } catch (error) {
@@ -211,9 +233,15 @@ async function onAuthSubmit(event) {
   try {
     const payload = { username, password };
     const result = await api(registering ? "/api/auth/register" : "/api/auth/login", { method:"POST", body:JSON.stringify(payload) });
-    // Cloudflare Worker memakai cookie HttpOnly; token tidak perlu disimpan di JavaScript.
+    // Cookie sesi dikelola server sebagai HttpOnly dan tidak disimpan di JavaScript.
     saveToken(null);
-    if (!result.user) throw new Error("Respons autentikasi tidak menyertakan data akun.");
+    if (registering) {
+      closeAuth(); $("#authForm").reset();
+      notify("Akun berhasil dibuat. Silakan masuk.");
+      openAuth("login");
+      return;
+    }
+    if (!result.user) throw new Error("Respons login tidak menyertakan data akun.");
     state.user = result.user;
     document.body.classList.add("authenticated");
     closeAuth(); $("#authForm").reset(); notify(registering ? "Pendaftaran berhasil." : "Login berhasil.");
@@ -266,7 +294,7 @@ async function submitWithdrawal(event) {
 async function logout() {
   try { if (state.user) await api("/api/auth/logout", { method:"POST" }); }
   catch (error) { console.warn("Logout server:", getMessage(error)); }
-  saveToken(null); state.user = null; document.body.classList.remove("authenticated"); state.tasks = []; state.wallet = null; state.submissions = [];
+  saveToken(null); state.user = null; document.body.classList.remove("authenticated"); state.tasks = []; state.wallet = null; state.submissions = []; state.withdrawals = []; state.robux = [];
   renderProfile(); renderView("overview"); notify("Sesi lokal sudah diakhiri.");
 }
 async function restoreSession() {
