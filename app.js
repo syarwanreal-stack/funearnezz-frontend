@@ -3,7 +3,9 @@
  * Setelah backend punya URL HTTPS publik, isi API_BASE di bawah.
  * Jangan masukkan password, token rahasia, .env, atau kredensial admin di file ini.
  */
-const API_BASE = "https://lunaris-node.hostkita.help:20323"; // Backend HTTPS HostKita
+const SUPABASE_URL = "https://lzowsdbdyeforqvsjunm.supabase.co";
+const SUPABASE_KEY = "sb_publishable_yXFC_Gh1HRYYFOAwvrjfHQ_FVjxApVu";
+const API_BASE = SUPABASE_URL;
 
 const $ = (selector) => document.querySelector(selector);
 const state = { token: null, user: null, tasks: [], wallet: null, submissions: [], view: "overview", authMode: "login", busy: false };
@@ -40,17 +42,47 @@ function getToken() { return state.token || sessionStorage.getItem("fe_token"); 
 function saveToken(token) { state.token = token; if (token) sessionStorage.setItem("fe_token", token); else sessionStorage.removeItem("fe_token"); }
 function apiURL(path) { return `${API_BASE.replace(/\/+$/, "")}${path.startsWith("/") ? path : `/${path}`}`; }
 async function api(path, options = {}) {
-  if (!API_BASE) throw new Error("URL HTTPS backend belum diatur. Frontend belum dapat mengambil data akun.");
-  const headers = new Headers(options.headers || {});
   const token = getToken();
-  if (token) headers.set("Authorization", `Bearer ${token}`);
+  const headers = new Headers(options.headers || {});
+  headers.set("apikey", SUPABASE_KEY);
+  headers.set("Authorization", `Bearer ${token || SUPABASE_KEY}`);
   if (options.body && !(options.body instanceof FormData) && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
-  const response = await fetch(apiURL(path), { ...options, headers, credentials: "omit" });
+  headers.set("Accept", "application/json");
+  let url, method = options.method || "GET", body = options.body;
+  if (path === "/api/health") url = apiURL("/rest/v1/tasks?select=id&limit=1");
+  else if (path === "/api/auth/login") {
+    const p = JSON.parse(body || "{}"); url = apiURL("/auth/v1/token?grant_type=password");
+    body = JSON.stringify({ email: p.email || p.username, password: p.password });
+  } else if (path === "/api/auth/register") {
+    const p = JSON.parse(body || "{}"); url = apiURL("/auth/v1/signup");
+    body = JSON.stringify({ email: p.email || p.username, password: p.password, data: { username: p.username || "", display_name: p.username || "" } });
+  } else if (path === "/api/auth/logout") url = apiURL("/auth/v1/logout");
+  else if (path === "/api/me") { if (!token) throw new Error("Silakan login terlebih dahulu."); url = apiURL("/auth/v1/user"); }
+  else if (path === "/api/tasks") url = apiURL("/rest/v1/tasks?select=*&status=eq.active&order=created_at.desc");
+  else if (path === "/api/submissions/mine") url = apiURL("/rest/v1/submissions?select=*,tasks(title)&order=created_at.desc");
+  else if (path === "/api/wallet") url = apiURL("/rest/v1/wallet_transactions?select=amount,kind,created_at&order=created_at.desc");
+  else if (path === "/api/withdrawals") throw new Error("Penarikan belum diaktifkan: perlu validasi saldo atomik di backend agar saldo tidak bisa ditarik ganda.");
+  else if (path === "/api/tasks/submit") throw new Error("Upload bukti belum diaktifkan: buat private Supabase Storage bucket dan aturan akses terlebih dahulu.");
+  else throw new Error("Endpoint belum didukung oleh integrasi Supabase.");
+  const response = await fetch(url, { method, headers, body, credentials: "omit" });
   const contentType = response.headers.get("content-type") || "";
-  const data = contentType.includes("application/json") ? await response.json() : await response.text();
+  const data = response.status === 204 ? null : contentType.includes("application/json") ? await response.json() : await response.text();
   if (!response.ok) {
-    const message = data && typeof data === "object" ? (data.error || data.message || `HTTP ${response.status}`) : `HTTP ${response.status}: ${String(data).slice(0, 180)}`;
+    const message = data && typeof data === "object" ? (data.msg || data.message || data.error_description || data.error || `HTTP ${response.status}`) : `HTTP ${response.status}: ${String(data).slice(0,180)}`;
     throw new Error(message);
+  }
+  if (path === "/api/wallet") {
+    const rows = Array.isArray(data) ? data : [];
+    return { available_balance: rows.reduce((sum, row) => sum + Number(row.amount || 0), 0), currency: "IDR", transactions: rows };
+  }
+  if (path === "/api/submissions/mine") return Array.isArray(data) ? data.map(row => ({...row, taskTitle: row.tasks?.title || `Pengajuan #${row.id}`})) : [];
+  if (path === "/api/me") {
+    const user = data || {}; let profile = {};
+    try {
+      const res = await fetch(apiURL(`/rest/v1/profiles?id=eq.${encodeURIComponent(user.id)}&select=*`), { headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${token}` } });
+      if (res.ok) profile = (await res.json())[0] || {};
+    } catch {}
+    return { ...user, ...profile, email: user.email, username: profile.username || user.user_metadata?.username || user.email };
   }
   return data;
 }
@@ -158,11 +190,7 @@ function openAuth(mode) {
   if (!$("#authDialog").open) $("#authDialog").showModal();
 }
 function closeAuth() { if ($("#authDialog").open) $("#authDialog").close(); }
-async function checkHealth() {
-  if (!API_BASE) { setConnection("unknown", "API belum diatur"); return; }
-  try { await api("/api/health"); setConnection("online", "API terhubung"); }
-  catch (error) { setConnection("offline", "API belum terhubung"); console.warn("Health check gagal:", getMessage(error)); }
-}
+async function checkHealth() { try { await api("/api/health"); setConnection("online", "Supabase terhubung"); } catch (error) { setConnection("offline", "Supabase belum terhubung"); console.warn("Supabase check gagal:", getMessage(error)); } }
 async function parseList(data, keys) {
   if (Array.isArray(data)) return data;
   for (const key of keys) if (Array.isArray(data?.[key])) return data[key];
@@ -205,7 +233,7 @@ async function onAuthSubmit(event) {
   try {
     const payload = registering ? { username, email: identity.includes("@") ? identity : undefined, password } : { username: identity, email: identity.includes("@") ? identity : undefined, password };
     const result = await api(registering ? "/api/auth/register" : "/api/auth/login", { method:"POST", body:JSON.stringify(payload) });
-    const token = result.token || result.accessToken || result.access_token || result.session?.token;
+    const token = result.token || result.accessToken || result.access_token || result.session?.access_token;
     if (token) saveToken(token);
     else if (result.user || result.id || result.username) {
       // Backend yang tidak mengembalikan token mungkin memakai cookie; implementasi cookie harus disesuaikan server-side.
