@@ -88,7 +88,8 @@ const body = async req => {
 };
 const usernameOK = u => typeof u==="string" && /^[A-Za-z0-9_]{3,24}$/.test(u);
 const emailFor = u => u.toLowerCase()+"@"+AUTH_HOST;
-const isDisabled = p => Boolean(p?.disabled ?? p?.disable ?? false);\nconst safeProfile = p => p ? ({id:p.id, username:p.username, role:p.role, balance:Number(p.balance||0), reserved_balance:Number(p.reserved_balance||0), created_at:p.created_at}) : null;
+const isDisabled = p => Boolean(p?.disabled ?? p?.disable ?? false);
+const safeProfile = p => p ? ({id:p.id, username:p.username, role:p.role, balance:Number(p.balance||0), reserved_balance:Number(p.reserved_balance||0), created_at:p.created_at}) : null;
 async function current(request, env) {
   const token = parseCookies(request)[COOKIE] || (request.headers.get("Authorization")||"").replace(/^Bearer\s+/i,"");
   if (!token) return null;
@@ -118,7 +119,15 @@ async function handle(request,env) {
   const aliases={"/api/auth/login":"/api/login","/api/auth/register":"/api/register","/api/auth/logout":"/api/logout","/api/tasks":"/api/jobs","/api/submissions/mine":"/api/history","/api/wallet":"/api/wallet"}; path=aliases[path]||path;
   if(method==="OPTIONS") return new Response(null,{status:204,headers:cors(request,env)});
   if(path==="/api/health"&&method==="GET") return reply({ok:true,service:"funearnezz",databaseConfigured:!!(env.SUPABASE_URL&&env.SUPABASE_PUBLISHABLE_KEY&&env.SUPABASE_SERVICE_ROLE_KEY)},200,cors(request,env));
-  if(path==="/api/maintenance"&&method==="GET") {\n    try {\n      if(!env.SUPABASE_URL||!env.SUPABASE_SERVICE_ROLE_KEY) return reply({enabled:false,reason:"",reopenAt:""},200,cors(request,env));\n      const rows=await rest(env,"settings","key=in.(maintenanceEnabled,maintenanceReason,maintenanceReopenAt)&select=key,value");\n      const cfg=Object.fromEntries((rows||[]).map(row=>[row.key,row.value]));\n      const enabled=cfg.maintenanceEnabled===true||String(cfg.maintenanceEnabled).toLowerCase()==="true";\n      return reply({enabled,reason:String(cfg.maintenanceReason||""),reopenAt:String(cfg.maintenanceReopenAt||"")},200,cors(request,env));\n    } catch(error) { return reply({enabled:false,reason:"",reopenAt:""},200,cors(request,env)); }\n  }
+  if(path==="/api/maintenance"&&method==="GET") {
+    try {
+      if(!env.SUPABASE_URL||!env.SUPABASE_SERVICE_ROLE_KEY) return reply({enabled:false,reason:"",reopenAt:""},200,cors(request,env));
+      const rows=await rest(env,"settings","key=in.(maintenanceEnabled,maintenanceReason,maintenanceReopenAt)&select=key,value");
+      const cfg=Object.fromEntries((rows||[]).map(row=>[row.key,row.value]));
+      const enabled=cfg.maintenanceEnabled===true||String(cfg.maintenanceEnabled).toLowerCase()==="true";
+      return reply({enabled,reason:String(cfg.maintenanceReason||""),reopenAt:String(cfg.maintenanceReopenAt||"")},200,cors(request,env));
+    } catch(error) { return reply({enabled:false,reason:"",reopenAt:""},200,cors(request,env)); }
+  }
   if(!path.startsWith("/api/")) return env.ASSETS ? env.ASSETS.fetch(request) : new Response("Not found",{status:404});
   if(!env.SUPABASE_URL||!env.SUPABASE_SERVICE_ROLE_KEY) return fail("Supabase belum dikonfigurasi di Cloudflare Worker",503,cors(request,env));
   try {
