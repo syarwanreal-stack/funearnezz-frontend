@@ -234,7 +234,7 @@ async function handle(request,env) {
       const cost=robux*rate;
       if(!Number.isSafeInteger(rate)||rate<1||!Number.isSafeInteger(cost)) return fail("Tarif atau total potongan tidak valid.");
       // This RPC must atomically check available balance, reserve the cost, and persist method/rate/cost.
-      const created=await rest(env,"rpc/create_robux_request","",{method:"POST",body:JSON.stringify({p_user_id:s.profile.id,p_method:methodName,p_robux:robux,p_username:username,p_gamepass_url:methodName==="gamepass"?gamepassUrl:"",p_rate:rate,p_cost:cost})});
+      const created=await sb(env,"/rest/v1/rpc/create_robux_request",{method:"POST",body:JSON.stringify({p_user_id:s.profile.id,p_method:methodName,p_robux:robux,p_username:username,p_gamepass_url:methodName==="gamepass"?gamepassUrl:"",p_rate:rate,p_cost:cost})});
       await audit(env,s.profile.id,"robux_request_created",{method:methodName,robux,rate,cost});
       return reply({ok:true,request:created,method:methodName,robux,rate,cost,message:"Permintaan dikirim. Saldo yang ditahan: Rp "+cost.toLocaleString("id-ID")+"."},201,cors(request,env));
     }
@@ -246,7 +246,7 @@ async function handle(request,env) {
       return reply({users:users.length,jobs:jobs.length,pending_submissions:subs.length,pending_withdrawals:withdrawals.length,pending_robux:robux.length},200,cors(request,env));
     }
     if(path==="/api/admin/jobs"&&method==="GET") {await requireAdmin(request,env);return reply(await rest(env,"jobs","select=*&order=created_at.desc"),200,cors(request,env));}
-    if(path==="/api/admin/jobs"&&method==="POST") {const s=await requireAdmin(request,env),b=await body(request);if(!b.title||!Number.isFinite(Number(b.reward)))return fail("Judul dan reward wajib diisi");const rows=await rest(env,"jobs","",{method:"POST",headers:{Prefer:"return=representation"},body:JSON.stringify({title:String(b.title).slice(0,160),description:String(b.description||"").slice(0,4000),reward:Number(b.reward),status:"active"})});await audit(env,s.user.id,"job.create",{title:b.title});return reply(rows?.[0]||{ok:true},201,cors(request,env));}
+    if(path==="/api/admin/jobs"&&method==="POST") {const s=await requireAdmin(request,env),b=await body(request);if(!String(b.title||"").trim()||!Number.isFinite(Number(b.reward))||Number(b.reward)<0)return fail("Judul wajib diisi dan reward harus berupa angka nol atau lebih.",400,cors(request,env));const rows=await rest(env,"jobs","",{method:"POST",headers:{Prefer:"return=representation"},body:JSON.stringify({title:String(b.title).slice(0,160),description:String(b.description||"").slice(0,4000),reward:Number(b.reward),status:"active"})});await audit(env,s.user.id,"job.create",{title:b.title});return reply(rows?.[0]||{ok:true},201,cors(request,env));}
     if(path==="/api/admin/submissions"&&method==="GET") {await requireAdmin(request,env);return reply(await rest(env,"submissions","select=*&order=created_at.desc"),200,cors(request,env));}
     if(path==="/api/admin/withdrawals"&&method==="GET") {await requireAdmin(request,env);return reply(await rest(env,"withdrawals","select=*&order=created_at.desc"),200,cors(request,env));}
     if(path==="/api/admin/robux"&&method==="GET") {await requireAdmin(request,env);return reply(await rest(env,"robux_requests","select=*&order=created_at.desc"),200,cors(request,env));}
