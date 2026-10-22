@@ -143,9 +143,12 @@ function openAuth(mode) {
   $("#authEyebrow").textContent = registering ? "JOIN FUNEARNEZZ" : "WELCOME BACK";
   $("#authTitle").textContent = registering ? "Buat akun baru" : "Masuk akun";
   $("#authSubtitle").textContent = registering ? "Daftar untuk mulai menggunakan dashboard reward." : "Lanjutkan aktivitas reward kamu.";
-  $("#nameField").classList.toggle("hidden", !registering);
-  $("#authName").required = registering;
+  $("#nameField").classList.add("hidden");
+  $("#authName").required = false;
   $("#authIdentity").placeholder = "Masukkan username";
+  $("#confirmPasswordField").classList.toggle("hidden", !registering);
+  $("#authConfirmPassword").required = registering;
+  $("#authIdentity").value = ""; $("#authPassword").value = ""; $("#authConfirmPassword").value = "";
   $("#authPassword").autocomplete = registering ? "new-password" : "current-password";
   $("#authSubmit").innerHTML = registering ? "Buat akun <span>→</span>" : "Masuk <span>→</span>";
   $("#authSwitchText").innerHTML = registering ? 'Sudah punya akun? <button type="button" id="switchAuth">Masuk</button>' : 'Belum punya akun? <button type="button" id="switchAuth">Daftar gratis</button>';
@@ -175,8 +178,8 @@ async function loadDashboard() {
   try {
     const [me, tasks, submissions, wallet] = await Promise.all([
       api("/api/me"),
-      api("/api/tasks"),
-      api("/api/submissions/mine"),
+      api("/api/jobs"),
+      api("/api/history"),
       api("/api/wallet")
     ]);
     state.user = me.user || me;
@@ -198,20 +201,24 @@ async function onAuthSubmit(event) {
   const registering = state.authMode === "register";
   const identity = $("#authIdentity").value.trim();
   const password = $("#authPassword").value;
-  const username = $("#authName").value.trim();
+  const username = identity;
   const errorBox = $("#authError");
   errorBox.classList.add("hidden");
+  if (registering && password !== $("#authConfirmPassword").value) { errorBox.textContent = "Konfirmasi password tidak cocok."; errorBox.classList.remove("hidden"); return; }
+  if (!/^[A-Za-z0-9_]{3,24}$/.test(identity)) { errorBox.textContent = "Username harus 3–24 karakter (huruf, angka, underscore)."; errorBox.classList.remove("hidden"); return; }
   
   state.busy = true; const submit = $("#authSubmit"); submit.disabled = true; submit.textContent = "Memproses…";
   try {
-    const payload = registering ? { username, password } : { username: identity, password };
+    const payload = { username, password };
     const result = await api(registering ? "/api/auth/register" : "/api/auth/login", { method:"POST", body:JSON.stringify(payload) });
     // Cloudflare Worker memakai cookie HttpOnly; token tidak perlu disimpan di JavaScript.
     saveToken(null);
     if (!result.user) throw new Error("Respons autentikasi tidak menyertakan data akun.");
     state.user = result.user;
+    document.body.classList.add("authenticated");
     closeAuth(); $("#authForm").reset(); notify(registering ? "Pendaftaran berhasil." : "Login berhasil.");
     await loadDashboard();
+    $("#workspace").scrollIntoView({ behavior:"smooth", block:"start" });
   } catch (error) {
     errorBox.textContent = getMessage(error); errorBox.classList.remove("hidden");
   } finally {
@@ -259,18 +266,19 @@ async function submitWithdrawal(event) {
 async function logout() {
   try { if (state.user) await api("/api/auth/logout", { method:"POST" }); }
   catch (error) { console.warn("Logout server:", getMessage(error)); }
-  saveToken(null); state.user = null; state.tasks = []; state.wallet = null; state.submissions = [];
+  saveToken(null); state.user = null; document.body.classList.remove("authenticated"); state.tasks = []; state.wallet = null; state.submissions = [];
   renderProfile(); renderView("overview"); notify("Sesi lokal sudah diakhiri.");
 }
 async function restoreSession() {
   try {
     const result = await api("/api/me");
     state.user = result.user || null;
-    if (state.user) await loadDashboard();
-    else { renderProfile(); renderView("overview"); }
+    if (state.user) { document.body.classList.add("authenticated"); await loadDashboard(); $("#workspace").scrollIntoView({ behavior:"auto", block:"start" }); }
+    else { document.body.classList.remove("authenticated"); renderProfile(); renderView("overview"); }
   } catch {
     saveToken(null);
     state.user = null;
+    document.body.classList.remove("authenticated");
     renderProfile();
     renderView("overview");
   }
