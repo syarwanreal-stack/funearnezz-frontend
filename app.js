@@ -143,8 +143,8 @@ function openAuth(mode) {
   $("#authEyebrow").textContent = registering ? "JOIN FUNEARNEZZ" : "WELCOME BACK";
   $("#authTitle").textContent = registering ? "Buat akun baru" : "Masuk akun";
   $("#authSubtitle").textContent = registering ? "Daftar untuk mulai menggunakan dashboard reward." : "Lanjutkan aktivitas reward kamu.";
-  $("#nameField").classList.toggle("hidden", !registering);
-  $("#authName").required = registering;
+  $("#nameField").classList.add("hidden");
+  $("#authName").required = false;
   $("#authIdentity").placeholder = "Masukkan username";
   $("#authPassword").autocomplete = registering ? "new-password" : "current-password";
   $("#authSubmit").innerHTML = registering ? "Buat akun <span>→</span>" : "Masuk <span>→</span>";
@@ -175,8 +175,8 @@ async function loadDashboard() {
   try {
     const [me, tasks, submissions, wallet] = await Promise.all([
       api("/api/me"),
-      api("/api/tasks"),
-      api("/api/submissions/mine"),
+      api("/api/jobs"),
+      api("/api/history"),
       api("/api/wallet")
     ]);
     state.user = me.user || me;
