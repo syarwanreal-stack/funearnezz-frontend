@@ -45,73 +45,79 @@ from auth.users u
 where lower(u.email) = 'syarwanreal@gmail.com'
 on conflict (id) do update set role = 'admin';
 
+-- SECURITY DEFINER avoids recursive RLS when policies check the admin role.
+create or replace function app_private.is_funearnezz_admin()
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $
+  select exists (
+    select 1 from public.profiles
+    where id = (select auth.uid()) and role = 'admin'
+  );
+$;
+revoke all on function app_private.is_funearnezz_admin() from public, anon;
+grant execute on function app_private.is_funearnezz_admin() to authenticated;
+
 -- Admin can read all application rows for dashboard moderation.
 drop policy if exists "admin_read_profiles" on public.profiles;
 create policy "admin_read_profiles" on public.profiles
 for select to authenticated
 using (
-  exists (select 1 from public.profiles p
-          where p.id = (select auth.uid()) and p.role = 'admin')
+  (select app_private.is_funearnezz_admin())
 );
 
 drop policy if exists "admin_manage_tasks" on public.tasks;
 create policy "admin_manage_tasks" on public.tasks
 for all to authenticated
 using (
-  exists (select 1 from public.profiles p
-          where p.id = (select auth.uid()) and p.role = 'admin')
+  (select app_private.is_funearnezz_admin())
 )
 with check (
-  exists (select 1 from public.profiles p
-          where p.id = (select auth.uid()) and p.role = 'admin')
+  (select app_private.is_funearnezz_admin())
 );
 
 drop policy if exists "admin_read_submissions" on public.submissions;
 create policy "admin_read_submissions" on public.submissions
 for select to authenticated
 using (
-  exists (select 1 from public.profiles p
-          where p.id = (select auth.uid()) and p.role = 'admin')
+  (select app_private.is_funearnezz_admin())
 );
 
 drop policy if exists "admin_update_submissions" on public.submissions;
 create policy "admin_update_submissions" on public.submissions
 for update to authenticated
 using (
-  exists (select 1 from public.profiles p
-          where p.id = (select auth.uid()) and p.role = 'admin')
+  (select app_private.is_funearnezz_admin())
 )
 with check (
-  exists (select 1 from public.profiles p
-          where p.id = (select auth.uid()) and p.role = 'admin')
+  (select app_private.is_funearnezz_admin())
 );
 
 drop policy if exists "admin_read_wallet_transactions" on public.wallet_transactions;
 create policy "admin_read_wallet_transactions" on public.wallet_transactions
 for select to authenticated
 using (
-  exists (select 1 from public.profiles p
-          where p.id = (select auth.uid()) and p.role = 'admin')
+  (select app_private.is_funearnezz_admin())
 );
 
 drop policy if exists "admin_read_withdrawals" on public.withdrawals;
 create policy "admin_read_withdrawals" on public.withdrawals
 for select to authenticated
 using (
-  exists (select 1 from public.profiles p
-          where p.id = (select auth.uid()) and p.role = 'admin')
+  (select app_private.is_funearnezz_admin())
 );
 
 drop policy if exists "admin_update_withdrawals" on public.withdrawals;
 create policy "admin_update_withdrawals" on public.withdrawals
 for update to authenticated
 using (
-  exists (select 1 from public.profiles p
-          where p.id = (select auth.uid()) and p.role = 'admin')
+  (select app_private.is_funearnezz_admin())
 )
 with check (
-  exists (select 1 from public.profiles p
-          where p.id = (select auth.uid()) and p.role = 'admin')
+  (select app_private.is_funearnezz_admin())
 );
 
 commit;
