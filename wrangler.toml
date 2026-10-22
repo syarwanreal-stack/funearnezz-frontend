@@ -11,4 +11,4 @@ exclude = [".git/**", ".wrangler/**", "node_modules/**", "supabase/**", "README.
 [vars]
 SUPABASE_URL = "https://lzowsdbdyeforqvsjunm.supabase.co"
 SUPABASE_PUBLISHABLE_KEY = "sb_publishable_yXFC_Gh1HRYYFOAwvrjfHQ_FVjxApVu"
-ADMIN_USERNAME = "admin"
+FRONTEND_ORIGIN = "https://funearnezz-frontend.syarwanreals.workers.dev"

@@ -1,0 +1,10 @@
+{
+  "name": "funearnezz-frontend",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "check": "node --check worker.js && node --check app.js",
+    "test": "node --test"
+  }
+}

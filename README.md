@@ -1,30 +1,43 @@
 # FunEarnEzz
 
-FunEarnEzz is being prepared for a Cloudflare-first deployment. The existing visual design in `index.html` and `style.css` is intentionally preserved.
+FunEarnEzz is a static frontend served by Cloudflare Workers, with server-side API routes that talk to Supabase. The browser never receives the Supabase secret/service key.
 
-## Stage 1 — deploy and review the website
+## Configure Supabase first
 
-- Hosting and static assets: Cloudflare Worker Assets.
-- Frontend API requests use same-origin `/api/*` routes; there is no separate panel URL to configure.
-- CAPTCHA is not required.
-- The site should be viewable before Supabase is configured. The UI shows that the frontend is ready and the backend is pending.
-- Wrangler uses the Cloudflare Worker name `funearnezz-frontend` and a compatibility date that is not in the future.
-- Repository metadata, Wrangler temporary files, database scripts, and local secret files are excluded from public asset uploads.
+1. Create or choose a **fresh Supabase project**. The SQL below is a baseline schema for this branch, not a safe migration for an existing production database whose data must be preserved.
+2. Open **SQL Editor** in the Supabase dashboard and run [`supabase/schema.sql`](./supabase/schema.sql). It creates the tables, private proof bucket, RLS policies, wallet ledger, and transactional RPC functions used by the Worker.
+3. In Supabase **Project Settings → API**, copy the project URL and publishable key. Configure `SUPABASE_URL` and `SUPABASE_PUBLISHABLE_KEY` in `wrangler.toml` (the publishable key is designed for public clients).
+4. Configure `SUPABASE_SERVICE_ROLE_KEY` as a **Cloudflare Worker Secret**, never as a `[vars]` entry or committed file. From a terminal with Wrangler authenticated, run:
+   ```sh
+   npx wrangler secret put SUPABASE_SERVICE_ROLE_KEY
+   ```
+   Paste the new Supabase secret key when prompted. Supabase's new `sb_secret_...` key format is supported; a legacy service-role JWT is also supported. If a secret was pasted into a chat or committed into Git, rotate it first and use the replacement.
+5. Deploy with `npx wrangler deploy`, or configure Cloudflare Workers Builds to use that command. The configured `FRONTEND_ORIGIN` must match the actual frontend origin when cross-origin requests are used. For the same-origin `workers.dev` deployment in this repository it is set in `wrangler.toml`.
 
-Use Cloudflare Workers Builds with the deploy command `npx wrangler deploy` and this repository's `wrangler.toml`. Do not add a Pterodactyl panel URL, panel startup command, or old external API URL.
+## Username/password accounts
 
-## Stage 2 — finish Supabase connection
+Users register and sign in with a username and password; no personal email address is requested. The Worker maps usernames to an internal synthetic email address and creates the Auth user server-side as confirmed. This is a username-only design, so users cannot use email-based account recovery; keep a secure record of their credentials and do not reuse passwords from other services.
 
-Supabase setup is intentionally deferred until the site design has been reviewed. Before production use, the database schema and RPCs must be aligned with the Worker endpoints and tested.
+Registration creates a regular user only. To provision the first admin, register the intended admin account, confirm that it exists, then run this SQL in Supabase SQL Editor:
+```sql
+update public.profiles set role = 'admin' where username = 'your_admin_username';
+```
+Replace the placeholder with the exact username you registered. The site does not promote an account just because its name is `admin`.
 
-The Supabase project URL (`SUPABASE_URL`) and public publishable key (`SUPABASE_PUBLISHABLE_KEY`) are configured as non-secret Worker variables in `wrangler.toml`. The Worker backend requires `SUPABASE_SERVICE_ROLE_KEY` to be configured separately as a Cloudflare Worker Secret before database-backed endpoints can work. This secret is intentionally not committed to GitHub, even if the repository is public. The Worker supports either a legacy `service_role` JWT or a new-format Supabase `sb_secret_...` key (the latter is sent as an API key, not as a bearer JWT). Because the previously shared secret may be exposed, rotate it and configure the replacement with `npx wrangler secret put SUPABASE_SERVICE_ROLE_KEY`.
+## Available workflows
 
-Username-only registration uses an internal synthetic email address that the user never needs to enter. In Supabase Auth, disable email confirmation for this username/password flow; otherwise signup may require email verification. The form asks for password confirmation, but only the password is sent to the server.
+- User authentication, dashboard, active jobs, image proof submissions, activity history, and balance display.
+- DANA/other configured withdrawal requests with funds reserved at request time and refunded on rejection.
+- Robux requests through Game Pass or username, with server-side rate calculation and balance reservation.
+- Admin APIs for task creation, user controls and balance adjustment, submission/withdrawal/Robux review, audit logs, and settings.
 
-To create the admin account, register username `admin` through the site first, then promote that profile in Supabase SQL Editor after verifying it exists: `update public.profiles set role = 'admin' where username = 'admin';`. Do not store the initial admin password in source code or SQL.
+Proof images are uploaded to the private `submission-proofs` Storage bucket. The Worker only returns a time-limited signed URL after checking that the caller owns the submission or is an admin.
 
-## Important functionality status
+## Checks
 
-A successful static deployment does not mean account and reward features are fully operational. Registration/login, balances, tasks, proof uploads, DANA withdrawals, Robux redemption, and admin workflows require the Supabase schema, secure upload handling, and transactional server-side validation to be configured and tested in Stage 2.
-
-Do not treat this project as production-ready until those checks pass.
+Run locally with Node.js 20 or later:
+```sh
+npm run check
+npm test
+```
+GitHub Actions runs the same syntax and mocked-Supabase contract tests for pull requests. These tests do not prove that your live Supabase project has been configured; after applying the SQL and setting Cloudflare secrets, verify `/api/health`, then test registration, login, proof upload, withdrawal reservation/refund, and each admin review workflow against the actual project before accepting real users or handling real payouts.
