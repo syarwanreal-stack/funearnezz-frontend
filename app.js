@@ -16,7 +16,15 @@ function showRequestDialog(message) {
   clearTimeout(noticeModalTimer);
   noticeModalTimer = setTimeout(() => { if (dialog.open) dialog.close(); }, 3000);
 }
-function closeRequestDialog() { clearTimeout(noticeModalTimer); const dialog = $("#requestNoticeDialog"); if (dialog.open) dialog.close(); }\nasync function loadMaintenanceNotice() {\n  const banner=$("#maintenanceBanner"); if(!banner) return;\n  try { const data=await api("/api/maintenance"); if(!data.enabled) {banner.classList.add("hidden"); return;}\n    const reason=String(data.reason||"Sistem sedang dalam maintenance."); $("#maintenanceReasonText").textContent=reason;\n    const reopen=String(data.reopenAt||"").trim(); $("#maintenanceReopenText").textContent=reopen ? "Perkiraan dibuka kembali: "+new Date(reopen).toLocaleString("id-ID") : "Waktu pembukaan kembali belum ditentukan.";\n    banner.classList.remove("hidden");\n  } catch(error) { console.info("Pengumuman maintenance belum tersedia:",getMessage(error)); }\n}
+function closeRequestDialog() { clearTimeout(noticeModalTimer); const dialog = $("#requestNoticeDialog"); if (dialog.open) dialog.close(); }
+async function loadMaintenanceNotice() {
+  const banner=$("#maintenanceBanner"); if(!banner) return;
+  try { const data=await api("/api/maintenance"); if(!data.enabled) {banner.classList.add("hidden"); return;}
+    const reason=String(data.reason||"Sistem sedang dalam maintenance."); $("#maintenanceReasonText").textContent=reason;
+    const reopen=String(data.reopenAt||"").trim(); $("#maintenanceReopenText").textContent=reopen ? "Perkiraan dibuka kembali: "+new Date(reopen).toLocaleString("id-ID") : "Waktu pembukaan kembali belum ditentukan.";
+    banner.classList.remove("hidden");
+  } catch(error) { console.info("Pengumuman maintenance belum tersedia:",getMessage(error)); }
+}
 
 function escapeHTML(value) {
   return String(value ?? "").replace(/[&<>"']/g, char => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[char]));
@@ -209,7 +217,11 @@ async function renderAdmin() {
       <form id="adminSettingsForm" class="form-grid">
         <label class="field">Minimal Robux<input name="robuxMin" type="number" min="1" step="1" value="${escapeHTML(cfg.robuxMin ?? 10)}" required></label>
         <label class="field">Tarif Game Pass per Robux (Rp)<input name="gamepassRate" type="number" min="1" step="1" value="${escapeHTML(cfg.gamepassRate ?? 170)}" required></label>
-        <label class="field">Tarif Username per Robux (Rp)<input name="usernameRate" type="number" min="1" step="1" value="${escapeHTML(cfg.usernameRate ?? 230)}" required></label>\n        <h4 class="form-section-title">Pengumuman maintenance</h4>\n        <label class="field">Status maintenance<select name="maintenanceEnabled"><option value="false" ${String(cfg.maintenanceEnabled ?? "false")==="true"?"selected":""}>Nonaktif</option><option value="true" ${String(cfg.maintenanceEnabled ?? "false")==="true"?"selected":""}>Aktif</option></select></label>\n        <label class="field">Alasan / pengumuman<textarea name="maintenanceReason" maxlength="1000" rows="3" placeholder="Contoh: Perbaikan sistem penarikan">${escapeHTML(cfg.maintenanceReason ?? "")}</textarea></label>\n        <label class="field">Perkiraan dibuka lagi<input name="maintenanceReopenAt" type="datetime-local" value="${escapeHTML(cfg.maintenanceReopenAt ?? "")}"><span class="field-hint">Opsional. Waktu ditampilkan sesuai zona waktu browser pengunjung.</span></label>
+        <label class="field">Tarif Username per Robux (Rp)<input name="usernameRate" type="number" min="1" step="1" value="${escapeHTML(cfg.usernameRate ?? 230)}" required></label>
+        <h4 class="form-section-title">Pengumuman maintenance</h4>
+        <label class="field">Status maintenance<select name="maintenanceEnabled"><option value="false" ${String(cfg.maintenanceEnabled ?? "false")==="true"?"selected":""}>Nonaktif</option><option value="true" ${String(cfg.maintenanceEnabled ?? "false")==="true"?"selected":""}>Aktif</option></select></label>
+        <label class="field">Alasan / pengumuman<textarea name="maintenanceReason" maxlength="1000" rows="3" placeholder="Contoh: Perbaikan sistem penarikan">${escapeHTML(cfg.maintenanceReason ?? "")}</textarea></label>
+        <label class="field">Perkiraan dibuka lagi<input name="maintenanceReopenAt" type="datetime-local" value="${escapeHTML(cfg.maintenanceReopenAt ?? "")}"><span class="field-hint">Opsional. Waktu ditampilkan sesuai zona waktu browser pengunjung.</span></label>
         <div id="adminSettingsError" class="form-error hidden" role="alert"></div>
         <button class="button button-primary" type="submit">Simpan pengaturan</button>
       </form>`;
@@ -463,7 +475,9 @@ document.addEventListener("click", event => {
   if (target.dataset.userAdjust) adminAdjust(target.dataset.userAdjust);
 });
 $("#authForm").addEventListener("submit", onAuthSubmit);
-$("#authDialog").addEventListener("click", event => { if (event.target === $("#authDialog")) closeAuth(); });\n$("#requestNoticeOk").addEventListener("click", closeRequestDialog);\n$("#requestNoticeDialog").addEventListener("click", event => { if (event.target === $("#requestNoticeDialog")) closeRequestDialog(); });
+$("#authDialog").addEventListener("click", event => { if (event.target === $("#authDialog")) closeAuth(); });
+$("#requestNoticeOk").addEventListener("click", closeRequestDialog);
+$("#requestNoticeDialog").addEventListener("click", event => { if (event.target === $("#requestNoticeDialog")) closeRequestDialog(); });
 document.addEventListener("submit", event => {
   if (event.target.id === "withdrawForm") submitWithdrawal(event);
   else if (event.target.id === "robuxForm") submitRobux(event);
