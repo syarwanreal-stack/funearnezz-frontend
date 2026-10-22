@@ -37,9 +37,14 @@ const parseCookies = (request) => Object.fromEntries((request.headers.get("Cooki
 const sb = async (env, path, init={}) => {
   const base = env.SUPABASE_URL.replace(/\/$/,"");
   const serverKey = env.SUPABASE_SERVICE_ROLE_KEY;
-  const authHeaders = { apikey: serverKey };
-  // Legacy service_role keys are JWTs; new sb_secret keys are API keys, not bearer JWTs.
-  if ((serverKey.match(/\./g) || []).length === 2) authHeaders.Authorization = `Bearer ${serverKey}`;
+  // Supabase Auth endpoints use the project's publishable key as apikey.
+  // Keep the secret/service-role key for server-side Data API requests only.
+  const isAuthEndpoint = path.startsWith("/auth/v1/");
+  const requestKey = isAuthEndpoint ? env.SUPABASE_PUBLISHABLE_KEY : serverKey;
+  if (!requestKey) throw new Error(isAuthEndpoint ? "Supabase publishable key is missing" : "Supabase server key is missing");
+  const authHeaders = { apikey: requestKey };
+  // Legacy service_role JWTs need a Bearer header for Data API; sb_secret keys do not.
+  if (!isAuthEndpoint && (serverKey.match(/\\./g) || []).length === 2) authHeaders.Authorization = `Bearer ${serverKey}`;
   const res = await fetch(base + path, { ...init, headers: {
     ...authHeaders,
     "Content-Type":"application/json",
