@@ -147,16 +147,18 @@ async function handle(request,env) {
         user_metadata:{username}
       })});
       if(!created?.id) return fail("Pendaftaran gagal");
-      const profile={id:created.id,username,role:"user",balance:0,reserved_balance:0};
+      const profile={id:created.id,username};
       try {
-        // Auth trigger may already create this row; upsert prevents duplicate primary-key errors.
+        // Merge only id and username so existing role and balance are never overwritten.
         await rest(env,"profiles","on_conflict=id",{method:"POST",headers:{Prefer:"resolution=merge-duplicates,return=minimal"},body:JSON.stringify(profile)});
+        const session=await sb(env,"/auth/v1/token?grant_type=password",{method:"POST",body:JSON.stringify({email:emailFor(username),password})});
+        const rows=await rest(env,"profiles","id=eq."+encodeURIComponent(created.id)+"&select=*");
+        if(!session?.access_token||!rows[0]||isDisabled(rows[0])) throw new Error("Akun dibuat tetapi sesi otomatis gagal dibuat.");
+        return reply({ok:true,message:"Akun berhasil dibuat.",user:safeProfile(rows[0])},201,{...cors(request,env),"Set-Cookie":cookie(session.access_token,Math.min(86400,Math.max(60,Number(session.expires_in)||3600)))});
       } catch (profileError) {
-        // Roll back the Auth user if profile creation fails, avoiding orphaned usernames.
         try { await sbAdmin(env,"/auth/v1/admin/users/"+encodeURIComponent(created.id),{method:"DELETE"}); } catch {}
         throw profileError;
       }
-      return reply({ok:true,message:"Akun berhasil dibuat. Silakan login."},201,cors(request,env));
     }
     if((path==="/api/login"||path==="/api/auth/login")&&method==="POST") {
       const b=await body(request), username=String(b.username||"").trim(), password=String(b.password||"");
