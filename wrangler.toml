@@ -1,0 +1,12 @@
+name = "funearnezz"
+main = "worker.js"
+compatibility_date = "2026-10-23"
+
+[assets]
+directory = "."
+binding = "ASSETS"
+run_worker_first = ["/api/*"]
+
+[vars]
+ADMIN_USERNAME = "syarwanreal"
+FRONTEND_ORIGIN = "https://YOUR-PROJECT.pages.dev"

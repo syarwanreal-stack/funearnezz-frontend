@@ -1,47 +1,23 @@
-# FunEarnEzz Frontend
+# FunEarnEzz — Cloudflare Workers + Supabase
 
-Frontend statis HTML/CSS/JavaScript untuk di-deploy ke Cloudflare Pages. Tidak membutuhkan build command.
+This branch moves API requests to a same-origin Cloudflare Worker and prepares the app for a fresh Supabase setup. The existing frontend layout is retained and CAPTCHA is not required.
 
-## File
-- `index.html` — struktur halaman
-- `style.css` — desain responsif dark premium
-- `app.js` — interaksi frontend dan pemanggilan API
-- `README.md` — panduan deployment
+## Setup
+1. Install Node.js and Wrangler: `npm install`, then run `npx wrangler dev`.
+2. Copy `.dev.vars.example` to `.dev.vars` and fill in the Supabase project URL and **server-only service-role key**. Never commit `.dev.vars` or put the service-role key in browser code.
+3. Configure the database tables and RPCs listed in `worker.js` in Supabase before using member/admin features.
+4. Deploy with `npx wrangler deploy`. Add `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` as Worker secrets. Set `FRONTEND_ORIGIN` to the exact deployed origin.
 
-## Penting sebelum menghubungkan backend
-1. Deploy frontend dan catat URL `https://NAMA-PROJECT.pages.dev`.
-2. Pastikan backend punya URL API publik HTTPS yang benar-benar aktif. Jangan memakai localhost atau HTTP dari halaman HTTPS.
-3. Edit `app.js`, isi `API_BASE` dengan URL HTTPS backend (tanpa `/api` di ujung), lalu commit perubahan.
-4. Atur `FRONTEND_ORIGIN` pada `.env` backend ke origin Pages persis, misalnya `https://nama-project.pages.dev` (tanpa slash di akhir), lalu restart backend.
-5. Backend harus mengizinkan origin tersebut melalui CORS dan menyediakan endpoint yang dipakai aplikasi.
+## Included
+- Cloudflare Worker API routes for username/password auth, profiles, jobs, submissions, wallet balance, withdrawal and Robux requests, and admin review/management.
+- Same-origin frontend requests; CAPTCHA is not required.
+- Server-side Supabase service-role access and role checks on admin endpoints.
+- `GET /api/health` health check.
 
-## Kontrak API yang diharapkan frontend
-- `GET /api/health`
-- `POST /api/auth/register` — JSON `{ username, email?, password }`
-- `POST /api/auth/login` — JSON `{ username, email?, password }`
-- `POST /api/auth/logout`
-- `GET /api/me`
-- `GET /api/tasks`
-- `GET /api/submissions/mine`
-- `POST /api/tasks/submit` — multipart fields `taskId`, `note`, `proof`
-- `GET /api/wallet`
-- `POST /api/withdrawals` — JSON `{ method, amount, destination }`
+## Must be completed before production
+- Create and verify Supabase tables/constraints and RPCs (`create_withdrawal`, `admin_adjust_balance`) before live withdrawals or balance adjustments. SQL is intentionally left for the next setup step.
+- Set `ADMIN_USERNAME` before deployment. New registration with that username is assigned the admin role; existing profiles must be assigned the role explicitly.
+- Private Storage upload for image proof is not implemented yet; submissions currently accept a proof URL/text.
+- Test every endpoint and confirm atomic balance changes, RLS, and authorization before deploying a live rewards system.
 
-Frontend mengirim token sesi sebagai `Authorization: Bearer ...` jika backend mengembalikan token pada login/register. Format respons endpoint wajib dicocokkan dengan `server.js`. Frontend tidak mengelola saldo/reward secara otoritatif dan tidak menyediakan panel admin karena otorisasi admin wajib dibuat serta diperiksa di backend.
-
-## Deployment Cloudflare Pages dari Android
-1. Buat repository GitHub baru, misalnya `funearnezz-frontend`.
-2. Upload `index.html`, `style.css`, `app.js`, dan `README.md` ke root repository.
-3. Di Cloudflare Dashboard buka **Workers & Pages** → **Create** → **Pages** → **Connect to Git** (label menu bisa sedikit berubah).
-4. Pilih repository yang baru dibuat.
-5. Framework preset: **None**. Build command: kosong. Build output directory: `/` atau `.` sesuai pilihan yang diterima dashboard untuk file di root. Jika dashboard meminta direktori output, gunakan root repository (`/` jika tersedia; beberapa layar menggunakan `.`). Jangan masukkan `public` karena file berada di root.
-6. Klik **Save and Deploy**.
-7. Setelah selesai, buka URL `https://<project>.pages.dev` yang ditampilkan di halaman deployment.
-
-## Keamanan
-- Jangan unggah `.env`, database SQLite (`*.db`, `*.sqlite`, `*.sqlite3`), file upload bukti, session/token rahasia, backup database, atau password admin.
-- Jangan menaruh password admin atau secret di `app.js`.
-- Frontend statis bukan tempat menyimpan rahasia.
-- Setiap endpoint admin, saldo, reward, review bukti, dan withdrawal harus melakukan autentikasi, otorisasi, dan validasi di backend.
-- Jangan aktifkan CORS wildcard (`*`) jika memakai cookie credentials.
-- Jangan menganggap backend sehat sebelum `GET /api/health` berhasil mengembalikan respons yang sesuai.
+Never expose the service-role key in frontend files. Keep it only in Cloudflare Worker secrets.

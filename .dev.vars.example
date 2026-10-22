@@ -1,0 +1,4 @@
+SUPABASE_URL=https://YOUR-PROJECT.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=replace-with-server-only-service-role-key
+FRONTEND_ORIGIN=http://localhost:8787
+ADMIN_USERNAME=syarwanreal
