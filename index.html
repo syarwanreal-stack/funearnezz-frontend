@@ -88,8 +88,9 @@
       <div class="modal-logo">F<span>+</span></div><div class="eyebrow" id="authEyebrow">WELCOME BACK</div>
       <h2 id="authTitle">Masuk akun</h2><p id="authSubtitle">Lanjutkan aktivitas reward kamu.</p>
       <label id="nameField" class="field hidden">Nama pengguna<input id="authName" autocomplete="username" placeholder="Nama pengguna" minlength="3"></label>
-      <label class="field">Username atau email<input id="authIdentity" autocomplete="username" required placeholder="Masukkan username atau email"></label>
+      <label class="field">Username<input id="authIdentity" autocomplete="username" required placeholder="Masukkan username"></label>
       <label class="field">Password<input id="authPassword" type="password" autocomplete="current-password" required minlength="8" placeholder="Minimal 8 karakter"></label>
+      <label class="field hidden" id="confirmPasswordField">Konfirmasi password<input id="authConfirmPassword" type="password" autocomplete="new-password" minlength="8" placeholder="Ketik ulang password"></label>
       <div id="authError" class="form-error hidden" role="alert"></div>
       <button class="button button-primary button-large full-width" id="authSubmit" type="submit">Masuk <span>→</span></button>
       <p class="switch-auth" id="authSwitchText">Belum punya akun? <button type="button" id="switchAuth">Daftar gratis</button></p>
