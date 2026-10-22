@@ -376,7 +376,7 @@ async function onAuthSubmit(event) {
   } catch (error) {
     errorBox.textContent = getMessage(error); errorBox.classList.remove("hidden");
   } finally {
-    state.busy = false; submit.disabled = false; submit.innerHTML = registering ? "Buat akun <span>→</span>" : "Masuk <span>→</span>";
+    state.busy = false; submit.disabled = false; submit.innerHTML = state.authMode === "register" ? "Buat akun <span>→</span>" : "Masuk <span>→</span>";
   }
 }
 async function submitProof(taskId) {
