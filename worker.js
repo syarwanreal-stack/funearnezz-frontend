@@ -76,7 +76,8 @@ async function audit(env, actor, action, details={}) {
   try { await rest(env,"audit_logs","",{method:"POST",headers:{Prefer:"return=minimal"},body:JSON.stringify({actor_id:actor,action,details})}); } catch {}
 }
 async function handle(request,env) {
-  const url=new URL(request.url); let path=url.pathname; const method=request.method;\n  const aliases={"/api/auth/login":"/api/login","/api/auth/register":"/api/register","/api/auth/logout":"/api/logout","/api/tasks":"/api/jobs","/api/submissions/mine":"/api/history","/api/wallet":"/api/wallet"}; path=aliases[path]||path;
+  const url=new URL(request.url); let path=url.pathname; const method=request.method;
+  const aliases={"/api/auth/login":"/api/login","/api/auth/register":"/api/register","/api/auth/logout":"/api/logout","/api/tasks":"/api/jobs","/api/submissions/mine":"/api/history","/api/wallet":"/api/wallet"}; path=aliases[path]||path;
   if(method==="OPTIONS") return new Response(null,{status:204,headers:cors(request,env)});
   if(path==="/api/health"&&method==="GET") return reply({ok:true,service:"funearnezz",databaseConfigured:!!(env.SUPABASE_URL&&env.SUPABASE_SERVICE_ROLE_KEY)},200,cors(request,env));
   if(!path.startsWith("/api/")) return env.ASSETS ? env.ASSETS.fetch(request) : new Response("Not found",{status:404});
@@ -143,10 +144,25 @@ async function handle(request,env) {
       return reply({ok:true,result:rows},201,cors(request,env));
     }
     if(path==="/api/robux"&&method==="POST") {
-      const s=await requireUser(request,env), b=await body(request), amount=Number(b.amount);
-      if(!Number.isFinite(amount)||amount<=0) return fail("Jumlah tidak valid");
-      const rows=await rest(env,"robux_requests","",{method:"POST",headers:{Prefer:"return=representation"},body:JSON.stringify({user_id:s.user.id,amount,username:String(b.username||b.roblox_username||"").slice(0,100),status:"pending"})});
-      return reply({ok:true,request:rows?.[0]},201,cors(request,env));
+      const s=await requireUser(request,env), b=await body(request);
+      const settings=await rest(env,"settings","select=key,value");
+      const cfg=Object.fromEntries((settings||[]).map(x=>[x.key,x.value]));
+      const min=Math.max(1,Number(cfg.robuxMin||10));
+      const methodName=String(b.method||"").toLowerCase();
+      const robux=Number(b.robux);
+      const username=String(b.username||b.roblox_username||"").trim().slice(0,100);
+      const gamepassUrl=String(b.gamepassUrl||b.gamepass_url||"").trim().slice(0,500);
+      if(!["gamepass","username"].includes(methodName)) return fail("Pilih metode Game Pass atau Via Username.");
+      if(!Number.isSafeInteger(robux)||robux<min) return fail("Minimal penukaran "+min+" Robux.");
+      if(!username) return fail("Username Roblox wajib diisi.");
+      if(methodName==="gamepass" && !/^https:\/\/www\.roblox\.com\//i.test(gamepassUrl)) return fail("Link Game Pass Roblox wajib diisi dengan URL HTTPS yang valid.");
+      const rate=Number(methodName==="gamepass"?(cfg.gamepassRate||170):(cfg.usernameRate||230));
+      const cost=robux*rate;
+      if(!Number.isSafeInteger(rate)||rate<1||!Number.isSafeInteger(cost)) return fail("Tarif atau total potongan tidak valid.");
+      // This RPC must atomically check available balance, reserve the cost, and persist method/rate/cost.
+      const created=await rest(env,"rpc/create_robux_request","",{method:"POST",body:JSON.stringify({p_user_id:s.profile.id,p_method:methodName,p_robux:robux,p_username:username,p_gamepass_url:methodName==="gamepass"?gamepassUrl:"",p_rate:rate,p_cost:cost})});
+      await audit(env,s.profile.id,"robux_request_created",{method:methodName,robux,rate,cost});
+      return reply({ok:true,request:created,method:methodName,robux,rate,cost,message:"Permintaan dikirim. Saldo yang ditahan: Rp "+cost.toLocaleString("id-ID")+"."},201,cors(request,env));
     }
     if(path==="/api/robux"&&method==="GET") {const s=await requireUser(request,env);return reply(await rest(env,"robux_requests","user_id=eq."+s.user.id+"&select=*&order=created_at.desc"),200,cors(request,env));}
     if(path==="/api/admin/overview"&&method==="GET") {
