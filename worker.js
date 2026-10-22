@@ -32,7 +32,7 @@ const reply = (data, status=200, headers={}) => new Response(JSON.stringify(data
   status, headers: { "content-type":"application/json; charset=utf-8", "cache-control":"no-store", ...headers }
 });
 const fail = (message, status=400, headers={}) => reply({error:message}, status, headers);
-const cookie = (value, maxAge=60*60*24*7) => `${COOKIE}=${value}; HttpOnly; Secure; SameSite=None; Path=/; Max-Age=${maxAge}`;
+const cookie = (value, maxAge=60*60) => `${COOKIE}=${value}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=${Math.max(0,Math.floor(maxAge))}`;
 const parseCookies = (request) => Object.fromEntries((request.headers.get("Cookie")||"").split(";").map(x=>x.trim()).filter(Boolean).map(x=>{const i=x.indexOf("=");return [x.slice(0,i),x.slice(i+1)];}));
 const sb = async (env, path, init={}) => {
   const base = env.SUPABASE_URL.replace(/\/$/,"");
@@ -52,7 +52,7 @@ const sb = async (env, path, init={}) => {
   }});
   const raw = await res.text();
   let data = null; try { data = raw ? JSON.parse(raw) : null; } catch { data = raw; }
-  if (!res.ok) throw new Error(typeof data === "object" ? (data.message||data.msg||data.error_description||data.error||"Supabase request failed") : "Supabase request failed");
+  if (!res.ok) { const err = new Error(typeof data === "object" ? (data.message||data.msg||data.error_description||data.error||"Supabase request failed") : "Supabase request failed"); err.upstreamStatus = res.status; throw err; }
   return data;
 };
 // Admin Auth operations must use the server-side secret/service-role key, never the public key.
@@ -74,12 +74,18 @@ const sbAdmin = async (env, path, init={}) => {
     const message = typeof data === "object" && data
       ? (data.message || data.msg || data.error_description || data.error || "Supabase admin request failed")
       : "Supabase admin request failed";
-    throw new Error(String(message).slice(0, 500));
+    const err = new Error(String(message).slice(0, 500)); err.upstreamStatus = res.status; throw err;
   }
   return data;
 };
 const rest = (env, table, query="", init={}) => sb(env, `/rest/v1/${table}${query ? "?"+query : ""}`, init);
-const body = async req => { try { return await req.json(); } catch { return {}; } };
+const body = async req => {
+  const type = (req.headers.get("Content-Type") || "").toLowerCase();
+  if (type.includes("multipart/form-data") || type.includes("application/x-www-form-urlencoded")) {
+    try { return Object.fromEntries((await req.formData()).entries()); } catch { return {}; }
+  }
+  try { return await req.json(); } catch { return {}; }
+};
 const usernameOK = u => typeof u==="string" && /^[A-Za-z0-9_]{3,24}$/.test(u);
 const emailFor = u => u.toLowerCase()+"@"+AUTH_HOST;
 const safeProfile = p => p ? ({id:p.id, username:p.username, role:p.role, balance:Number(p.balance||0), reserved_balance:Number(p.reserved_balance||0), created_at:p.created_at}) : null;
@@ -111,7 +117,7 @@ async function handle(request,env) {
   const url=new URL(request.url); let path=url.pathname; const method=request.method;
   const aliases={"/api/auth/login":"/api/login","/api/auth/register":"/api/register","/api/auth/logout":"/api/logout","/api/tasks":"/api/jobs","/api/submissions/mine":"/api/history","/api/wallet":"/api/wallet"}; path=aliases[path]||path;
   if(method==="OPTIONS") return new Response(null,{status:204,headers:cors(request,env)});
-  if(path==="/api/health"&&method==="GET") return reply({ok:true,service:"funearnezz",databaseConfigured:!!(env.SUPABASE_URL&&env.SUPABASE_SERVICE_ROLE_KEY)},200,cors(request,env));
+  if(path==="/api/health"&&method==="GET") return reply({ok:true,service:"funearnezz",databaseConfigured:!!(env.SUPABASE_URL&&env.SUPABASE_PUBLISHABLE_KEY&&env.SUPABASE_SERVICE_ROLE_KEY)},200,cors(request,env));
   if(!path.startsWith("/api/")) return env.ASSETS ? env.ASSETS.fetch(request) : new Response("Not found",{status:404});
   if(!env.SUPABASE_URL||!env.SUPABASE_SERVICE_ROLE_KEY) return fail("Supabase belum dikonfigurasi di Cloudflare Worker",503,cors(request,env));
   try {
@@ -132,7 +138,13 @@ async function handle(request,env) {
       })});
       if(!created?.id) return fail("Pendaftaran gagal");
       const profile={id:created.id,username,role:"user",balance:0,reserved_balance:0,disabled:false};
-      await rest(env,"profiles","",{method:"POST",headers:{Prefer:"return=minimal"},body:JSON.stringify(profile)});
+      try {
+        await rest(env,"profiles","",{method:"POST",headers:{Prefer:"return=minimal"},body:JSON.stringify(profile)});
+      } catch (profileError) {
+        // Roll back the Auth user if profile creation fails, avoiding orphaned usernames.
+        try { await sbAdmin(env,"/auth/v1/admin/users/"+encodeURIComponent(created.id),{method:"DELETE"}); } catch {}
+        throw profileError;
+      }
       return reply({ok:true,message:"Akun berhasil dibuat. Silakan login."},201,cors(request,env));
     }
     if((path==="/api/login"||path==="/api/auth/login")&&method==="POST") {
@@ -141,7 +153,7 @@ async function handle(request,env) {
       const data=await sb(env,"/auth/v1/token?grant_type=password",{method:"POST",body:JSON.stringify({email:emailFor(username),password})});
       const rows=await rest(env,"profiles","id=eq."+encodeURIComponent(data.user.id)+"&select=*");
       if(!rows[0]||rows[0].disabled) return fail("Akun tidak ditemukan atau dinonaktifkan",403);
-      return reply({ok:true,user:safeProfile(rows[0])},200,{...cors(request,env),"Set-Cookie":cookie(data.access_token)});
+      return reply({ok:true,user:safeProfile(rows[0])},200,{...cors(request,env),"Set-Cookie":cookie(data.access_token,Math.min(86400,Math.max(60,Number(data.expires_in)||3600)))});
     }
     if((path==="/api/logout"||path==="/api/auth/logout")&&method==="POST") return reply({ok:true},200,{...cors(request,env),"Set-Cookie":cookie("",0)});
     if(path==="/api/me"&&method==="GET") {const s=await requireUser(request,env);return reply({user:safeProfile(s.profile)},200,cors(request,env));}
@@ -156,7 +168,7 @@ async function handle(request,env) {
       return reply({user:safeProfile(s.profile),jobs,stats:{submissions:submissions.length,withdrawals:withdrawals.length}},200,cors(request,env));
     }
     if(path==="/api/jobs"&&method==="GET") return reply(await rest(env,"jobs","status=eq.active&select=*&order=created_at.desc"),200,cors(request,env));
-    if(path==="/api/wallet"&&method==="GET") {const s=await requireUser(request,env);return reply({balance:Number(s.profile.balance||0),reserved_balance:Number(s.profile.reserved_balance||0),transactions:[]},200,cors(request,env));}
+    if(path==="/api/wallet"&&method==="GET") {const s=await requireUser(request,env);const transactions=await rest(env,"wallet_transactions","user_id=eq."+s.user.id+"&select=*&order=created_at.desc&limit=100");return reply({balance:Number(s.profile.balance||0),reserved_balance:Number(s.profile.reserved_balance||0),transactions},200,cors(request,env));}
     let m=path.match(/^\/api\/jobs\/([^/]+)$/);
     if(m&&method==="GET") {const rows=await rest(env,"jobs","id=eq."+encodeURIComponent(m[1])+"&select=*");return rows[0]?reply(rows[0],200,cors(request,env)):fail("Tugas tidak ditemukan",404,cors(request,env));}
     m=path.match(/^\/api\/jobs\/([^/]+)\/submit$/);
@@ -164,9 +176,31 @@ async function handle(request,env) {
       const s=await requireUser(request,env), b=await body(request);
       const job=(await rest(env,"jobs","id=eq."+encodeURIComponent(m[1])+"&status=eq.active&select=id,reward"))[0];
       if(!job) return fail("Tugas tidak tersedia",404,cors(request,env));
-      const proof_url=String(b.proof_url||b.proof||"").slice(0,2000);
-      const rows=await rest(env,"submissions","",{method:"POST",headers:{Prefer:"return=representation"},body:JSON.stringify({user_id:s.user.id,job_id:job.id,note:String(b.note||"").slice(0,2000),proof_url,status:"pending"})});
+      const file=b.proof;
+      if (!file || typeof file.arrayBuffer!=="function" || !Number.isFinite(file.size)) return fail("Pilih gambar bukti yang valid.",400,cors(request,env));
+      if (file.size<1 || file.size>5*1024*1024) return fail("Ukuran gambar maksimal 5 MB.",413,cors(request,env));
+      const mime=String(file.type||"").toLowerCase();
+      const ext=({"image/jpeg":"jpg","image/png":"png","image/webp":"webp"})[mime];
+      if (!ext) return fail("Format gambar yang didukung: JPG, PNG, atau WEBP.",415,cors(request,env));
+      const proofPath=s.user.id+"/"+crypto.randomUUID()+"."+ext;
+      const encodedPath=proofPath.split("/").map(encodeURIComponent).join("/");
+      await sb(env,"/storage/v1/object/submission-proofs/"+encodedPath,{method:"POST",headers:{"Content-Type":mime,"x-upsert":"false"},body:await file.arrayBuffer()});
+      const rows=await rest(env,"submissions","",{method:"POST",headers:{Prefer:"return=representation"},body:JSON.stringify({user_id:s.user.id,job_id:job.id,note:String(b.note||"").slice(0,2000),proof_url:proofPath,status:"pending"})});
       return reply({ok:true,submission:rows?.[0]},201,cors(request,env));
+    }
+    m=path.match(/^\/api\/submissions\/([^/]+)\/proof$/);
+    if(m&&method==="GET") {
+      const s=await requireUser(request,env);
+      const row=(await rest(env,"submissions","id=eq."+encodeURIComponent(m[1])+"&select=id,user_id,proof_url"))[0];
+      if(!row) return fail("Bukti tidak ditemukan.",404,cors(request,env));
+      if(row.user_id!==s.user.id && s.profile.role!=="admin") return fail("Akses ditolak.",403,cors(request,env));
+      if(!row.proof_url) return fail("Pengajuan ini tidak memiliki gambar bukti.",404,cors(request,env));
+      const objectPath=String(row.proof_url).split("/").map(encodeURIComponent).join("/");
+      const signed=await sb(env,"/storage/v1/object/sign/submission-proofs/"+objectPath,{method:"POST",body:JSON.stringify({expiresIn:300})});
+      const raw=signed.signedURL||signed.signedUrl;
+      if(!raw) throw new Error("Storage tidak mengembalikan signed URL.");
+      const signedUrl=raw.startsWith("http")?raw:env.SUPABASE_URL.replace(/\/$/,"")+"/storage/v1"+(raw.startsWith("/")?raw:"/"+raw);
+      return reply({url:signedUrl,expiresIn:300},200,cors(request,env));
     }
     if(path==="/api/history"&&method==="GET") {
       const s=await requireUser(request,env);
@@ -208,7 +242,8 @@ async function handle(request,env) {
     if(path==="/api/admin/overview"&&method==="GET") {
       await requireAdmin(request,env);
       const [users,jobs,subs,withdrawals]=await Promise.all([rest(env,"profiles","select=id"),rest(env,"jobs","select=id"),rest(env,"submissions","status=eq.pending&select=id"),rest(env,"withdrawals","status=eq.pending&select=id")]);
-      return reply({users:users.length,jobs:jobs.length,pending_submissions:subs.length,pending_withdrawals:withdrawals.length},200,cors(request,env));
+      const robux=await rest(env,"robux_requests","status=eq.pending&select=id");
+      return reply({users:users.length,jobs:jobs.length,pending_submissions:subs.length,pending_withdrawals:withdrawals.length,pending_robux:robux.length},200,cors(request,env));
     }
     if(path==="/api/admin/jobs"&&method==="GET") {await requireAdmin(request,env);return reply(await rest(env,"jobs","select=*&order=created_at.desc"),200,cors(request,env));}
     if(path==="/api/admin/jobs"&&method==="POST") {const s=await requireAdmin(request,env),b=await body(request);if(!b.title||!Number.isFinite(Number(b.reward)))return fail("Judul dan reward wajib diisi");const rows=await rest(env,"jobs","",{method:"POST",headers:{Prefer:"return=representation"},body:JSON.stringify({title:String(b.title).slice(0,160),description:String(b.description||"").slice(0,4000),reward:Number(b.reward),status:"active"})});await audit(env,s.user.id,"job.create",{title:b.title});return reply(rows?.[0]||{ok:true},201,cors(request,env));}
@@ -219,11 +254,14 @@ async function handle(request,env) {
     if(path==="/api/admin/audit"&&method==="GET") {await requireAdmin(request,env);return reply(await rest(env,"audit_logs","select=*&order=created_at.desc&limit=200"),200,cors(request,env));}
     m=path.match(/^\/api\/admin\/(submissions|withdrawals|robux)\/([^/]+)\/review$/);
     if(m&&method==="POST") {
-      const s=await requireAdmin(request,env),b=await body(request),table={submissions:"submissions",withdrawals:"withdrawals",robux:"robux_requests"}[m[1]];
-      if(!["approved","rejected","paid","completed"].includes(b.status))return fail("Status tidak valid");
-      const rows=await rest(env,table,"id=eq."+encodeURIComponent(m[2]),{method:"PATCH",headers:{Prefer:"return=representation"},body:JSON.stringify({status:b.status,review_note:String(b.note||"").slice(0,1000),reviewed_at:new Date().toISOString()})});
+      const s=await requireAdmin(request,env),b=await body(request);
+      const allowed={submissions:["approved","rejected"],withdrawals:["paid","rejected"],robux:["completed","rejected"]};
+      if(!allowed[m[1]].includes(b.status))return fail("Status tidak valid untuk jenis pengajuan.",400,cors(request,env));
+      const rpc={submissions:["review_submission","p_submission_id"],withdrawals:["review_withdrawal","p_withdrawal_id"],robux:["review_robux_request","p_robux_request_id"]}[m[1]];
+      const args={[rpc[1]:m[2],p_status:b.status,p_note:String(b.note||"").slice(0,1000),p_admin_id:s.user.id]};
+      const result=await sb(env,"/rest/v1/rpc/"+rpc[0],{method:"POST",body:JSON.stringify(args)});
       await audit(env,s.user.id,"review."+m[1],{id:m[2],status:b.status});
-      return reply({ok:true,item:rows?.[0]},200,cors(request,env));
+      return reply({ok:true,item:result},200,cors(request,env));
     }
     m=path.match(/^\/api\/admin\/users\/([^/]+)\/(adjust|toggle)$/);
     if(m&&method==="POST") {
@@ -236,7 +274,10 @@ async function handle(request,env) {
     if(path==="/api/admin/settings"&&method==="POST") {const s=await requireAdmin(request,env),b=await body(request);for(const [key,value] of Object.entries(b)){await rest(env,"settings","on_conflict=key",{method:"POST",headers:{Prefer:"resolution=merge-duplicates,return=minimal"},body:JSON.stringify({key:String(key).slice(0,100),value})});}await audit(env,s.user.id,"settings.update",{keys:Object.keys(b)});return reply({ok:true},200,cors(request,env));}
     return fail("Endpoint tidak ditemukan",404,cors(request,env));
   } catch(e) {
-    const status=e.status||500;
+    let status=e.status||e.upstreamStatus||500;
+    if(path==="/api/login" && e.upstreamStatus===400) status=401;
+    if(path==="/api/register" && e.upstreamStatus===400 && /already|duplicate|unique/i.test(String(e.message))) status=409;
+    if(status<400||status>599) status=500;
     // Keep credentials and request bodies out of logs; log only route, status, and upstream error message.
     console.error("FunEarnEzz API request failed", {
       path,
@@ -244,7 +285,8 @@ async function handle(request,env) {
       status,
       error: String(e?.message || "Unknown error").slice(0, 500)
     });
-    return reply({error:status===500?"Terjadi kesalahan server. Periksa konfigurasi Supabase dan skema tabel.":e.message},status,cors(request,env));
+    const publicMessage=status===500?"Terjadi kesalahan server. Periksa konfigurasi Supabase dan skema tabel.":String(e?.message||"Permintaan gagal").slice(0,300);
+    return reply({error:publicMessage},status,cors(request,env));
   }
 }
 export default {
