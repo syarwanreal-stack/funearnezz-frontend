@@ -1,40 +1,26 @@
-# FunEarnEzz — Cloudflare Workers + Supabase
+# FunEarnEzz
 
-This project is being migrated from the old Pterodactyl API to a same-origin Cloudflare Worker with Supabase as the database/auth provider. The existing FunEarnEzz visual design in `index.html` and `style.css` is retained. CAPTCHA is not required.
+FunEarnEzz is being prepared for a Cloudflare-first deployment. The existing visual design in `index.html` and `style.css` is intentionally preserved.
 
-## Architecture
+## Stage 1 — deploy and review the website
 
-- Static UI: `index.html`, `style.css`, `app.js`.
-- API: `worker.js`, served on the same origin as the static assets.
-- Database and authentication: Supabase.
-- Deployment config: `wrangler.toml`.
-- Frontend calls `/api/*` on the same origin. No Supabase service-role key or database secret belongs in browser code.
+- Hosting and static assets: Cloudflare Worker Assets.
+- Frontend API requests use same-origin `/api/*` routes; there is no separate panel URL to configure.
+- CAPTCHA is not required.
+- The site should be viewable before Supabase is configured. The UI shows that the frontend is ready and the backend is pending.
+- Wrangler uses the Cloudflare Worker name `funearnezz-frontend` and a compatibility date that is not in the future.
+- Repository metadata, Wrangler temporary files, database scripts, and local secret files are excluded from public asset uploads.
 
-## Configure Cloudflare
+Use Cloudflare Workers Builds with the deploy command `npx wrangler deploy` and this repository's `wrangler.toml`. Do not add a Pterodactyl panel URL, panel startup command, or old external API URL.
 
-1. Connect this repository to Cloudflare Workers (static assets + Worker) or use Wrangler from a local development environment.
-2. Set Worker secrets `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` in the Cloudflare dashboard. Never commit actual values.
-3. Set the Worker variable `ADMIN_USERNAME` to the intended administrator username before public registration.
-4. Set `FRONTEND_ORIGIN` to the exact public site origin if cross-origin access is ever enabled. Same-origin frontend requests are preferred.
-5. Use `wrangler dev` for local development; use `wrangler deploy` only after configuring secrets and validating the build.
+## Stage 2 — configure Supabase after design approval
 
-## Supabase setup — important
+Supabase setup is intentionally deferred until the site design has been reviewed. Before production use, the database schema and RPCs must be aligned with the Worker endpoints and tested.
 
-The current Worker expects tables named `profiles`, `jobs`, `submissions`, `withdrawals`, `robux_requests`, `settings`, and `audit_logs`. It also calls database RPCs including `create_withdrawal`, `create_robux_request`, and `admin_adjust_balance`.
+The Worker will eventually require server-only secrets `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`. Add these through Cloudflare's secret settings only when we reach Stage 2. Never place the service-role key in `app.js`, HTML, or any public repository file, and never send it in chat.
 
-The existing `supabase/funearnezz_schema.sql` is an earlier schema and does **not** yet fully match those Worker expectations. Do not treat this repository as production-ready until a migration aligning the schema, constraints, RLS policies, and atomic balance-changing RPCs is added and tested. In particular, balance changes and withdrawal/Robux requests must be atomic and server-validated.
+## Important functionality status
 
-## Current implementation notes
+A successful static deployment does not mean account and reward features are fully operational. Registration/login, balances, tasks, proof uploads, DANA withdrawals, Robux redemption, and admin workflows require the Supabase schema, secure upload handling, and transactional server-side validation to be configured and tested in Stage 2.
 
-- CAPTCHA is not required; the Worker config endpoint returns `captchaRequired: false`.
-- The frontend uses same-origin Worker requests and an HttpOnly-cookie session rather than a browser-configured API base URL.
-- Task proof submission still needs a production-safe upload implementation. Do not send a private service-role key to the browser.
-- Validate account registration/login, task submission, wallet balances, DANA withdrawals, both Robux methods (Game Pass and username), admin review/adjustment, and session/logout flows against a configured test Supabase project before going live.
-
-## Security checklist
-
-- Never put `SUPABASE_SERVICE_ROLE_KEY`, passwords, access tokens, or real `.dev.vars` in Git.
-- Do not allow public signup to grant administrator role just by choosing an admin username. Provision the admin account/role through a trusted, explicit migration or secure operator action before public launch.
-- Enable and test RLS; use server-side authorization checks for admin endpoints.
-- Verify that approval/rejection transitions, balance reservation/release, and audit logs are transactional and cannot be replayed.
-- CAPTCHA removal does not remove the need for rate limiting, password protection, and abuse monitoring.
+Do not treat this project as production-ready until those checks pass.
