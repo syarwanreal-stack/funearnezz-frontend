@@ -84,10 +84,10 @@ async function handle(request,env) {
   if(!path.startsWith("/api/")) return env.ASSETS ? env.ASSETS.fetch(request) : new Response("Not found",{status:404});
   if(!env.SUPABASE_URL||!env.SUPABASE_SERVICE_ROLE_KEY) return fail("Supabase belum dikonfigurasi di Cloudflare Worker",503,cors(request,env));
   try {
-    if(path==="/api/register"&&method==="POST") {
+    if((path==="/api/register"||path==="/api/auth/register")&&method==="POST") {
       const b=await body(request), username=String(b.username||"").trim(), password=String(b.password||"");
       if(!usernameOK(username)) return fail("Username harus 3–24 karakter (huruf, angka, underscore)");
-      if(password.length<7||!/[A-Za-z]/.test(password)||!/[0-9]/.test(password)) return fail("Password minimal 7 karakter dan harus mengandung huruf serta angka");
+      if(password.length<8||!/[A-Za-z]/.test(password)||!/[0-9]/.test(password)) return fail("Password minimal 8 karakter dan harus mengandung huruf serta angka");
       const exists=await rest(env,"profiles","username=ilike."+encodeURIComponent(username)+"&select=id");
       if(exists.length) return fail("Username sudah digunakan",409);
       const created=await sb(env,"/auth/v1/signup",{method:"POST",body:JSON.stringify({email:emailFor(username),password,data:{username}})});
@@ -97,7 +97,7 @@ async function handle(request,env) {
       if(created.access_token) return reply({ok:true,user:safeProfile(profile)},200,{...cors(request,env),"Set-Cookie":cookie(created.access_token)});
       return reply({ok:true,message:"Akun dibuat. Silakan login."},200,cors(request,env));
     }
-    if(path==="/api/login"&&method==="POST") {
+    if((path==="/api/login"||path==="/api/auth/login")&&method==="POST") {
       const b=await body(request), username=String(b.username||"").trim(), password=String(b.password||"");
       if(!usernameOK(username)||!password) return fail("Username atau password salah",401);
       const data=await sb(env,"/auth/v1/token?grant_type=password",{method:"POST",body:JSON.stringify({email:emailFor(username),password})});
@@ -105,7 +105,7 @@ async function handle(request,env) {
       if(!rows[0]||rows[0].disabled) return fail("Akun tidak ditemukan atau dinonaktifkan",403);
       return reply({ok:true,user:safeProfile(rows[0])},200,{...cors(request,env),"Set-Cookie":cookie(data.access_token)});
     }
-    if(path==="/api/logout"&&method==="POST") return reply({ok:true},200,{...cors(request,env),"Set-Cookie":cookie("",0)});
+    if((path==="/api/logout"||path==="/api/auth/logout")&&method==="POST") return reply({ok:true},200,{...cors(request,env),"Set-Cookie":cookie("",0)});
     if(path==="/api/me"&&method==="GET") {const s=await requireUser(request,env);return reply({user:safeProfile(s.profile)},200,cors(request,env));}
     if(path==="/api/config"&&method==="GET") return reply({captchaRequired:false,appName:"FunEarnEzz"},200,cors(request,env));
     if(path==="/api/dashboard"&&method==="GET") {
