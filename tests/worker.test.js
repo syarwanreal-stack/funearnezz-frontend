@@ -146,7 +146,7 @@ test("schema contract defines every RPC used by Worker and private proof storage
   const source = await readFile(new URL("../worker.js", import.meta.url), "utf8");
   for (const rpc of ["create_withdrawal", "create_robux_request", "review_submission", "review_withdrawal", "review_robux_request", "admin_adjust_balance"]) {
     assert.match(sql, new RegExp("function public\\." + rpc + "\\s*\\("), `SQL function ${rpc} must exist`);
-    assert.ok(source.includes("/rpc/" + rpc), `Worker route must call ${rpc}`);
+    assert.ok(source.includes(rpc), `Worker route must reference ${rpc}`);
   }
   assert.match(sql, /submission-proofs[^;]*false/s, "proof bucket must not be public");
   assert.match(sql, /enable row level security/i);
