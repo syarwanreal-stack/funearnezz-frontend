@@ -44,7 +44,7 @@ const sb = async (env, path, init={}) => {
   if (!requestKey) throw new Error(isAuthEndpoint ? "Supabase publishable key is missing" : "Supabase server key is missing");
   const authHeaders = { apikey: requestKey };
   // Legacy service_role JWTs need a Bearer header for Data API; sb_secret keys do not.
-  if (!isAuthEndpoint && (serverKey.match(/\\./g) || []).length === 2) authHeaders.Authorization = `Bearer ${serverKey}`;
+  if (!isAuthEndpoint && (serverKey.match(/\./g) || []).length === 2) authHeaders.Authorization = `Bearer ${serverKey}`;
   const res = await fetch(base + path, { ...init, headers: {
     ...authHeaders,
     "Content-Type":"application/json",
