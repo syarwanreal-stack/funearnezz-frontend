@@ -1,0 +1,12 @@
+name = "funearnezz-api"
+main = "worker.js"
+compatibility_date = "2026-10-23"
+
+[assets]
+directory = "."
+binding = "ASSETS"
+run_worker_first = ["/api/*"]
+
+[vars]
+# Replace with the deployed frontend origin before enabling CORS.
+FRONTEND_ORIGIN = "https://YOUR-PROJECT.pages.dev"
