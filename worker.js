@@ -271,6 +271,7 @@ async function handle(request,env) {
       const result=await sb(env,"/rest/v1/rpc/admin_adjust_balance",{method:"POST",body:JSON.stringify({p_user_id:m[1],p_amount:delta,p_reason:String(b.reason||"Admin adjustment").slice(0,200)})});
       await audit(env,s.user.id,"user.adjust_balance",{id:m[1],amount:delta});return reply({ok:true,result},200,cors(request,env));
     }
+    if(path==="/api/admin/settings"&&method==="GET") {await requireAdmin(request,env);return reply(await rest(env,"settings","select=key,value&order=key.asc"),200,cors(request,env));}
     if(path==="/api/admin/settings"&&method==="POST") {const s=await requireAdmin(request,env),b=await body(request);for(const [key,value] of Object.entries(b)){await rest(env,"settings","on_conflict=key",{method:"POST",headers:{Prefer:"resolution=merge-duplicates,return=minimal"},body:JSON.stringify({key:String(key).slice(0,100),value})});}await audit(env,s.user.id,"settings.update",{keys:Object.keys(b)});return reply({ok:true},200,cors(request,env));}
     return fail("Endpoint tidak ditemukan",404,cors(request,env));
   } catch(e) {
