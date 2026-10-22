@@ -137,9 +137,10 @@ async function handle(request,env) {
         user_metadata:{username}
       })});
       if(!created?.id) return fail("Pendaftaran gagal");
-      const profile={id:created.id,username,role:"user",balance:0,reserved_balance:0,disabled:false};
+      const profile={id:created.id,username,role:"user",balance:0,reserved_balance:0};
       try {
-        await rest(env,"profiles","",{method:"POST",headers:{Prefer:"return=minimal"},body:JSON.stringify(profile)});
+        // Auth trigger may already create this row; upsert prevents duplicate primary-key errors.
+        await rest(env,"profiles","on_conflict=id",{method:"POST",headers:{Prefer:"resolution=merge-duplicates,return=minimal"},body:JSON.stringify(profile)});
       } catch (profileError) {
         // Roll back the Auth user if profile creation fails, avoiding orphaned usernames.
         try { await sbAdmin(env,"/auth/v1/admin/users/"+encodeURIComponent(created.id),{method:"DELETE"}); } catch {}
