@@ -238,7 +238,7 @@ async function submitRobux(event) {
   err.classList.add("hidden"); button.disabled=true; button.textContent="Mengirim…";
   try {
     const result=await api("/api/robux",{method:"POST",body:JSON.stringify(payload)});
-    showRequestDialog((result.message || "Permintaan Robux berhasil dikirim.") + " Mohon tunggu, permintaan akan ditinjau dan diproses oleh admin.");
+    showRequestDialog("Request penukaran Robux berhasil dikirim! Ada request masuk dan sekarang menunggu pemeriksaan admin. " + (result.message || ""));
     await loadDashboard(); renderView("submissions");
   } catch(error) { err.textContent=getMessage(error); err.classList.remove("hidden"); }
   finally { button.disabled=false; button.textContent="Ajukan penukaran →"; }
@@ -379,18 +379,12 @@ async function onAuthSubmit(event) {
   try {
     const payload = { username, password };
     const result = await api(registering ? "/api/auth/register" : "/api/auth/login", { method:"POST", body:JSON.stringify(payload) });
-    // Cookie sesi dikelola server sebagai HttpOnly dan tidak disimpan di JavaScript.
+    // Sesi dikelola server melalui cookie HttpOnly untuk login maupun pendaftaran.
     saveToken(null);
-    if (registering) {
-      closeAuth(); $("#authForm").reset();
-      notify("Akun berhasil dibuat. Silakan masuk.");
-      openAuth("login");
-      return;
-    }
-    if (!result.user) throw new Error("Respons login tidak menyertakan data akun.");
+    if (!result.user) throw new Error(registering ? "Akun dibuat, tetapi server belum membuat sesi otomatis. Silakan login sekali." : "Respons login tidak menyertakan data akun.");
     state.user = result.user;
     document.body.classList.add("authenticated");
-    closeAuth(); $("#authForm").reset(); notify(registering ? "Pendaftaran berhasil." : "Login berhasil.");
+    closeAuth(); $("#authForm").reset(); notify(registering ? "Pendaftaran berhasil! Dashboard siap digunakan." : "Login berhasil.");
     await loadDashboard();
     $("#workspace").scrollIntoView({ behavior:"smooth", block:"start" });
   } catch (error) {
@@ -418,7 +412,7 @@ async function submitProof(taskId) {
     button.disabled = true; button.textContent = "Mengirim…";
     try {
       await api(`/api/jobs/${encodeURIComponent(taskId)}/submit`, { method:"POST", body });
-      dialog.close(); notify("Bukti berhasil dikirim untuk diperiksa."); await loadDashboard(); renderView("submissions");
+      dialog.close(); showRequestDialog("Bukti tugas berhasil dikirim. Ada request masuk dan sekarang menunggu pemeriksaan admin."); await loadDashboard(); renderView("submissions");
     } catch (error) { err.textContent = getMessage(error); err.classList.remove("hidden"); }
     finally { button.disabled = false; button.textContent = "Kirim untuk diperiksa →"; }
   };
@@ -433,7 +427,7 @@ async function submitWithdrawal(event) {
   button.disabled = true; button.textContent = "Mengirim…";
   try {
     await api("/api/withdrawals", { method:"POST", body:JSON.stringify({ method, amount, destination }) });
-    showRequestDialog("Pengajuan penarikan berhasil dikirim. Mohon tunggu, permintaan akan ditinjau dan diproses oleh admin."); await loadDashboard(); renderView("submissions");
+    showRequestDialog("Pengajuan penarikan " + method + " berhasil dikirim! Ada request masuk dan sekarang menunggu pemeriksaan admin."); await loadDashboard(); renderView("submissions");
   } catch (error) { err.textContent = getMessage(error); err.classList.remove("hidden"); }
   finally { button.disabled = false; button.textContent = "Kirim pengajuan penarikan →"; }
 }
