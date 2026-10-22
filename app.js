@@ -226,7 +226,7 @@ async function submitRobux(event) {
   err.classList.add("hidden"); button.disabled=true; button.textContent="Mengirim…";
   try {
     const result=await api("/api/robux",{method:"POST",body:JSON.stringify(payload)});
-    notify(result.message || "Permintaan Robux dikirim.");
+    showRequestDialog((result.message || "Permintaan Robux berhasil dikirim.") + " Mohon tunggu, permintaan akan ditinjau dan diproses oleh admin.");
     await loadDashboard(); renderView("submissions");
   } catch(error) { err.textContent=getMessage(error); err.classList.remove("hidden"); }
   finally { button.disabled=false; button.textContent="Ajukan penukaran →"; }
