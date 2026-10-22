@@ -16,7 +16,7 @@ function showRequestDialog(message) {
   clearTimeout(noticeModalTimer);
   noticeModalTimer = setTimeout(() => { if (dialog.open) dialog.close(); }, 3000);
 }
-function closeRequestDialog() { clearTimeout(noticeModalTimer); const dialog = $("#requestNoticeDialog"); if (dialog.open) dialog.close(); }
+function closeRequestDialog() { clearTimeout(noticeModalTimer); const dialog = $("#requestNoticeDialog"); if (dialog.open) dialog.close(); }\nasync function loadMaintenanceNotice() {\n  const banner=$("#maintenanceBanner"); if(!banner) return;\n  try { const data=await api("/api/maintenance"); if(!data.enabled) {banner.classList.add("hidden"); return;}\n    const reason=String(data.reason||"Sistem sedang dalam maintenance."); $("#maintenanceReasonText").textContent=reason;\n    const reopen=String(data.reopenAt||"").trim(); $("#maintenanceReopenText").textContent=reopen ? "Perkiraan dibuka kembali: "+new Date(reopen).toLocaleString("id-ID") : "Waktu pembukaan kembali belum ditentukan.";\n    banner.classList.remove("hidden");\n  } catch(error) { console.info("Pengumuman maintenance belum tersedia:",getMessage(error)); }\n}
 
 function escapeHTML(value) {
   return String(value ?? "").replace(/[&<>"']/g, char => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[char]));
@@ -209,7 +209,7 @@ async function renderAdmin() {
       <form id="adminSettingsForm" class="form-grid">
         <label class="field">Minimal Robux<input name="robuxMin" type="number" min="1" step="1" value="${escapeHTML(cfg.robuxMin ?? 10)}" required></label>
         <label class="field">Tarif Game Pass per Robux (Rp)<input name="gamepassRate" type="number" min="1" step="1" value="${escapeHTML(cfg.gamepassRate ?? 170)}" required></label>
-        <label class="field">Tarif Username per Robux (Rp)<input name="usernameRate" type="number" min="1" step="1" value="${escapeHTML(cfg.usernameRate ?? 230)}" required></label>
+        <label class="field">Tarif Username per Robux (Rp)<input name="usernameRate" type="number" min="1" step="1" value="${escapeHTML(cfg.usernameRate ?? 230)}" required></label>\n        <h4 class="form-section-title">Pengumuman maintenance</h4>\n        <label class="field">Status maintenance<select name="maintenanceEnabled"><option value="false" ${String(cfg.maintenanceEnabled ?? "false")==="true"?"selected":""}>Nonaktif</option><option value="true" ${String(cfg.maintenanceEnabled ?? "false")==="true"?"selected":""}>Aktif</option></select></label>\n        <label class="field">Alasan / pengumuman<textarea name="maintenanceReason" maxlength="1000" rows="3" placeholder="Contoh: Perbaikan sistem penarikan">${escapeHTML(cfg.maintenanceReason ?? "")}</textarea></label>\n        <label class="field">Perkiraan dibuka lagi<input name="maintenanceReopenAt" type="datetime-local" value="${escapeHTML(cfg.maintenanceReopenAt ?? "")}"><span class="field-hint">Opsional. Waktu ditampilkan sesuai zona waktu browser pengunjung.</span></label>
         <div id="adminSettingsError" class="form-error hidden" role="alert"></div>
         <button class="button button-primary" type="submit">Simpan pengaturan</button>
       </form>`;
@@ -244,7 +244,7 @@ async function submitAdminJob(event) {
 async function saveAdminSettings(event) {
   event.preventDefault(); if(state.user?.role!=="admin") return;
   const form=event.currentTarget, err=$("#adminSettingsError"), button=form.querySelector('button[type="submit"]');
-  const values={robuxMin:Number(form.elements.robuxMin.value),gamepassRate:Number(form.elements.gamepassRate.value),usernameRate:Number(form.elements.usernameRate.value)};
+  const values={robuxMin:Number(form.elements.robuxMin.value),gamepassRate:Number(form.elements.gamepassRate.value),usernameRate:Number(form.elements.usernameRate.value),maintenanceEnabled:form.elements.maintenanceEnabled.value==="true",maintenanceReason:form.elements.maintenanceReason.value.trim(),maintenanceReopenAt:form.elements.maintenanceReopenAt.value};
   if(Object.values(values).some(value=>!Number.isSafeInteger(value)||value<1)){err.textContent="Semua nilai harus bilangan bulat positif.";err.classList.remove("hidden");return;}
   err.classList.add("hidden");button.disabled=true;
   try { await api("/api/admin/settings",{method:"POST",body:JSON.stringify(values)}); notify("Pengaturan berhasil disimpan."); await renderAdmin(); }
@@ -471,4 +471,4 @@ document.addEventListener("submit", event => {
   else if (event.target.id === "adminSettingsForm") saveAdminSettings(event);
 });
 $("#year").textContent = new Date().getFullYear();
-renderProfile(); renderView("overview"); checkHealth(); restoreSession();
+renderProfile(); renderView("overview"); checkHealth(); loadMaintenanceNotice(); restoreSession();
