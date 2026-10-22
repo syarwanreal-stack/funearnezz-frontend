@@ -257,7 +257,7 @@ async function saveAdminSettings(event) {
   event.preventDefault(); if(state.user?.role!=="admin") return;
   const form=event.currentTarget, err=$("#adminSettingsError"), button=form.querySelector('button[type="submit"]');
   const values={robuxMin:Number(form.elements.robuxMin.value),gamepassRate:Number(form.elements.gamepassRate.value),usernameRate:Number(form.elements.usernameRate.value),maintenanceEnabled:form.elements.maintenanceEnabled.value==="true",maintenanceReason:form.elements.maintenanceReason.value.trim(),maintenanceReopenAt:form.elements.maintenanceReopenAt.value};
-  if(Object.values(values).some(value=>!Number.isSafeInteger(value)||value<1)){err.textContent="Semua nilai harus bilangan bulat positif.";err.classList.remove("hidden");return;}
+  if([values.robuxMin,values.gamepassRate,values.usernameRate].some(value=>!Number.isSafeInteger(value)||value<1)){err.textContent="Semua nilai tarif dan minimal Robux harus bilangan bulat positif.";err.classList.remove("hidden");return;}
   err.classList.add("hidden");button.disabled=true;
   try { await api("/api/admin/settings",{method:"POST",body:JSON.stringify(values)}); notify("Pengaturan berhasil disimpan."); await renderAdmin(); }
   catch(error){err.textContent=getMessage(error);err.classList.remove("hidden");}
