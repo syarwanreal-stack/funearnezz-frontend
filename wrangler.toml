@@ -9,4 +9,5 @@ run_worker_first = ["/api/*"]
 exclude = [".git/**", ".wrangler/**", "node_modules/**", "supabase/**", "README.md", ".dev.vars*"]
 
 [vars]
-ADMIN_USERNAME = "syarwanreal"
+SUPABASE_URL = "https://lzowsdbdyeforqvsjunm.supabase.co"
+ADMIN_USERNAME = "admin"
