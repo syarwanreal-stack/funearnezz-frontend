@@ -1,6 +1,6 @@
-name = "funearnezz"
+name = "funearnezz-frontend"
 main = "worker.js"
-compatibility_date = "2026-10-23"
+compatibility_date = "2026-10-22"
 
 [assets]
 directory = "."
