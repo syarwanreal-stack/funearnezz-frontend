@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#090b16">
+  <meta name="description" content="FunEarnEzz — pusat tugas dan reward digital.">
+  <title>FunEarnEzz — Earn. Complete. Grow.</title>
+  <link rel="stylesheet" href="./style.css">
+  <script src="./app.js" defer></script>
+</head>
+<body>
+  <div class="ambient ambient-a"></div><div class="ambient ambient-b"></div>
+  <header class="topbar">
+    <a class="brand" href="#" aria-label="FunEarnEzz beranda">
+      <span class="brand-mark">F<span>+</span></span>
+      <span>FunEarn<span class="brand-accent">Ezz</span><small> EARN · COMPLETE · GROW</small></span>
+    </a>
+    <div class="top-actions">
+      <span class="connection"><i id="connectionDot"></i><span id="connectionText">API belum diatur</span></span>
+      <button class="button button-quiet small" id="openLogin">Masuk</button>
+      <button class="button button-primary small" id="openRegister">Daftar gratis <span>↗</span></button>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero" id="home">
+      <div class="hero-copy">
+        <div class="eyebrow"><span class="sparkle">✦</span> YOUR NEXT DIGITAL REWARD STARTS HERE</div>
+        <h1>Waktu kamu.<br>Usaha kamu.<br><span>Reward kamu.</span></h1>
+        <p class="hero-description">Selesaikan tugas, kirim bukti, dan pantau setiap pengajuan dalam satu dashboard yang simpel.</p>
+        <div class="hero-actions">
+          <button class="button button-primary button-large" id="heroRegister">Mulai sekarang <span>→</span></button>
+          <button class="button button-outline button-large" id="heroLogin">Saya sudah punya akun</button>
+        </div>
+        <div class="trust-row"><span><b>✓</b> Dashboard personal</span><span><b>✓</b> Status transparan</span><span><b>✓</b> Mobile friendly</span></div>
+      </div>
+      <div class="hero-visual" aria-label="Pratinjau dashboard">
+        <div class="orbit orbit-one"></div><div class="orbit orbit-two"></div>
+        <div class="preview-card">
+          <div class="preview-head"><div><span class="mini-label">YOUR OVERVIEW</span><h3>Ringkasan akun</h3></div><span class="avatar">FE</span></div>
+          <div class="balance-panel"><span>Saldo tersedia</span><strong>Rp <span>—</span></strong><small>Saldo akan tampil dari backend setelah login</small><div class="balance-glow"></div></div>
+          <div class="preview-stats"><div><span class="stat-icon cyan">✧</span><div><b>Daftar tugas</b><small>Temukan tugas tersedia</small></div></div><div><span class="stat-icon violet">◷</span><div><b>Riwayat pengajuan</b><small>Pantau status bukti</small></div></div></div>
+          <div class="preview-task"><div class="task-symbol">✦</div><div class="task-lines"><b>Task berikutnya</b><span>Hadiah ditentukan server</span></div><span class="pill pill-blue">TASK</span></div>
+        </div>
+        <div class="float-chip chip-top"><span class="chip-icon">✧</span><span><b>One dashboard</b><small>Semua aktivitasmu</small></span></div>
+        <div class="float-chip chip-bottom"><span class="live-dot"></span><span><b>Built for mobile</b><small>Nyaman dari HP</small></span></div>
+      </div>
+    </section>
+
+    <section class="feature-strip" aria-label="Fitur">
+      <div class="feature"><span class="feature-icon">▦</span><div><b>Tugas terorganisir</b><small>Instruksi dan reward jelas</small></div></div>
+      <div class="feature"><span class="feature-icon">⇧</span><div><b>Kirim bukti</b><small>Unggah gambar dengan mudah</small></div></div>
+      <div class="feature"><span class="feature-icon">◷</span><div><b>Status transparan</b><small>Pending, approved, rejected</small></div></div>
+      <div class="feature"><span class="feature-icon">◇</span><div><b>Penarikan saldo</b><small>Ajukan lewat dashboard</small></div></div>
+    </section>
+
+    <section class="workspace" id="workspace">
+      <div class="section-heading"><div><div class="eyebrow">MEMBER AREA</div><h2>Dashboard kamu<span class="title-dot">.</span></h2><p>Masuk untuk melihat data akun yang benar-benar berasal dari server.</p></div><span class="pill pill-muted" id="sessionBadge">BELUM MASUK</span></div>
+      <div class="dashboard-grid">
+        <aside class="side-card">
+          <div class="profile-row"><div class="profile-avatar" id="profileAvatar">?</div><div><b id="profileName">Guest</b><small id="profileEmail">Masuk untuk melanjutkan</small></div></div>
+          <nav class="side-nav" aria-label="Menu dashboard">
+            <button class="nav-item active" data-view="overview"><span>▦</span> Ringkasan</button>
+            <button class="nav-item" data-view="tasks"><span>✧</span> Daftar tugas</button>
+            <button class="nav-item" data-view="submissions"><span>◷</span> Riwayat pengajuan</button>
+            <button class="nav-item" data-view="withdraw"><span>⇧</span> Penarikan</button>
+          </nav>
+          <div class="side-note"><span>✦</span><div><b>Tips keamanan</b><small>Reward dan saldo diverifikasi server, bukan dari browser.</small></div></div>
+          <button class="button button-quiet logout-button hidden" id="logoutButton">Keluar akun ↗</button>
+        </aside>
+        <section class="main-card">
+          <div class="dashboard-toolbar"><div><span class="mini-label" id="viewKicker">YOUR ACCOUNT</span><h3 id="viewTitle">Ringkasan akun</h3></div><button class="button button-quiet small" id="refreshButton">↻ Segarkan</button></div>
+          <div id="notice" class="notice hidden" role="status"></div>
+          <div id="viewContent">
+            <div class="welcome-panel"><div class="welcome-art">✦</div><div><h4>Selamat datang di FunEarnEzz</h4><p>Masuk atau buat akun untuk memuat saldo, tugas, dan riwayatmu dari backend.</p><div class="inline-actions"><button class="button button-primary" id="contentLogin">Masuk</button><button class="button button-outline" id="contentRegister">Buat akun</button></div></div></div>
+            <div class="summary-grid"><div class="summary-box"><span>Saldo tersedia</span><b>—</b><small>Memerlukan login</small></div><div class="summary-box"><span>Pengajuan tugas</span><b>—</b><small>Memerlukan login</small></div><div class="summary-box"><span>Status API</span><b id="apiSummary">Belum diatur</b><small id="apiSummaryHint">Atur URL API di app.js</small></div></div>
+          </div>
+        </section>
+      </div>
+    </section>
+    <footer><a class="brand footer-brand" href="#"><span class="brand-mark">F<span>+</span></span><span>FunEarn<span class="brand-accent">Ezz</span></span></a><span>© <span id="year"></span> FunEarnEzz · Earn. Complete. Grow.</span><a href="#home">Kembali ke atas ↑</a></footer>
+  </main>
+
+  <dialog id="authDialog" class="modal">
+    <form id="authForm" class="modal-card">
+      <button type="button" class="modal-close" id="closeAuth" aria-label="Tutup">×</button>
+      <div class="modal-logo">F<span>+</span></div><div class="eyebrow" id="authEyebrow">WELCOME BACK</div>
+      <h2 id="authTitle">Masuk akun</h2><p id="authSubtitle">Lanjutkan aktivitas reward kamu.</p>
+      <label id="nameField" class="field hidden">Nama pengguna<input id="authName" autocomplete="username" placeholder="Nama pengguna" minlength="3"></label>
+      <label class="field">Username atau email<input id="authIdentity" autocomplete="username" required placeholder="Masukkan username atau email"></label>
+      <label class="field">Password<input id="authPassword" type="password" autocomplete="current-password" required minlength="8" placeholder="Minimal 8 karakter"></label>
+      <div id="authError" class="form-error hidden" role="alert"></div>
+      <button class="button button-primary button-large full-width" id="authSubmit" type="submit">Masuk <span>→</span></button>
+      <p class="switch-auth" id="authSwitchText">Belum punya akun? <button type="button" id="switchAuth">Daftar gratis</button></p>
+      <small class="privacy-note">Gunakan password unik. Jangan gunakan password akun penting lainnya.</small>
+    </form>
+  </dialog>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+</body>
+</html>
