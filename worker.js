@@ -207,6 +207,13 @@ async function handle(request,env) {
     return fail("Endpoint tidak ditemukan",404,cors(request,env));
   } catch(e) {
     const status=e.status||500;
+    // Keep credentials and request bodies out of logs; log only route, status, and upstream error message.
+    console.error("FunEarnEzz API request failed", {
+      path,
+      method,
+      status,
+      error: String(e?.message || "Unknown error").slice(0, 500)
+    });
     return reply({error:status===500?"Terjadi kesalahan server. Periksa konfigurasi Supabase dan skema tabel.":e.message},status,cors(request,env));
   }
 }
