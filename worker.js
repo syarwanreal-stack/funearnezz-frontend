@@ -76,7 +76,8 @@ async function audit(env, actor, action, details={}) {
   try { await rest(env,"audit_logs","",{method:"POST",headers:{Prefer:"return=minimal"},body:JSON.stringify({actor_id:actor,action,details})}); } catch {}
 }
 async function handle(request,env) {
-  const url=new URL(request.url); let path=url.pathname; const method=request.method;\n  const aliases={"/api/auth/login":"/api/login","/api/auth/register":"/api/register","/api/auth/logout":"/api/logout","/api/tasks":"/api/jobs","/api/submissions/mine":"/api/history","/api/wallet":"/api/wallet"}; path=aliases[path]||path;
+  const url=new URL(request.url); let path=url.pathname; const method=request.method;
+  const aliases={"/api/auth/login":"/api/login","/api/auth/register":"/api/register","/api/auth/logout":"/api/logout","/api/tasks":"/api/jobs","/api/submissions/mine":"/api/history","/api/wallet":"/api/wallet"}; path=aliases[path]||path;
   if(method==="OPTIONS") return new Response(null,{status:204,headers:cors(request,env)});
   if(path==="/api/health"&&method==="GET") return reply({ok:true,service:"funearnezz",databaseConfigured:!!(env.SUPABASE_URL&&env.SUPABASE_SERVICE_ROLE_KEY)},200,cors(request,env));
   if(!path.startsWith("/api/")) return env.ASSETS ? env.ASSETS.fetch(request) : new Response("Not found",{status:404});
