@@ -3,7 +3,7 @@
  * Setelah backend punya URL HTTPS publik, isi API_BASE di bawah.
  * Jangan masukkan password, token rahasia, .env, atau kredensial admin di file ini.
  */
-const API_BASE = ""; // Contoh format: "https://api.domain-kamu.com" — wajib HTTPS saat Pages memakai HTTPS.
+const API_BASE = "https://lunaris-node.hostkita.help:20323"; // Backend HTTPS HostKita
 
 const $ = (selector) => document.querySelector(selector);
 const state = { token: null, user: null, tasks: [], wallet: null, submissions: [], view: "overview", authMode: "login", busy: false };
