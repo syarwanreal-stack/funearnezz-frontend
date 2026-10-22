@@ -116,7 +116,8 @@ async function handle(request,env) {
       ]);
       return reply({user:safeProfile(s.profile),jobs,stats:{submissions:submissions.length,withdrawals:withdrawals.length}},200,cors(request,env));
     }
-    if(path==="/api/jobs"&&method==="GET") return reply(await rest(env,"jobs","status=eq.active&select=*&order=created_at.desc"),200,cors(request,env));\n    if(path==="/api/wallet"&&method==="GET") {const s=await requireUser(request,env);return reply({balance:Number(s.profile.balance||0),reserved_balance:Number(s.profile.reserved_balance||0),transactions:[]},200,cors(request,env));}
+    if(path==="/api/jobs"&&method==="GET") return reply(await rest(env,"jobs","status=eq.active&select=*&order=created_at.desc"),200,cors(request,env));
+    if(path==="/api/wallet"&&method==="GET") {const s=await requireUser(request,env);return reply({balance:Number(s.profile.balance||0),reserved_balance:Number(s.profile.reserved_balance||0),transactions:[]},200,cors(request,env));}
     let m=path.match(/^\/api\/jobs\/([^/]+)$/);
     if(m&&method==="GET") {const rows=await rest(env,"jobs","id=eq."+encodeURIComponent(m[1])+"&select=*");return rows[0]?reply(rows[0],200,cors(request,env)):fail("Tugas tidak ditemukan",404,cors(request,env));}
     m=path.match(/^\/api\/jobs\/([^/]+)\/submit$/);
