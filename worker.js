@@ -258,7 +258,7 @@ async function handle(request,env) {
       const allowed={submissions:["approved","rejected"],withdrawals:["paid","rejected"],robux:["completed","rejected"]};
       if(!allowed[m[1]].includes(b.status))return fail("Status tidak valid untuk jenis pengajuan.",400,cors(request,env));
       const rpc={submissions:["review_submission","p_submission_id"],withdrawals:["review_withdrawal","p_withdrawal_id"],robux:["review_robux_request","p_robux_request_id"]}[m[1]];
-      const args={[rpc[1]:m[2],p_status:b.status,p_note:String(b.note||"").slice(0,1000),p_admin_id:s.user.id]};
+      const args={ [rpc[1]]:m[2],p_status:b.status,p_note:String(b.note||"").slice(0,1000),p_admin_id:s.user.id]};
       const result=await sb(env,"/rest/v1/rpc/"+rpc[0],{method:"POST",body:JSON.stringify(args)});
       await audit(env,s.user.id,"review."+m[1],{id:m[2],status:b.status});
       return reply({ok:true,item:result},200,cors(request,env));
