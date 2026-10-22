@@ -9,3 +9,10 @@ body.authenticated .top-actions #openLogin, body.authenticated .top-actions #ope
 body.authenticated .section-heading > div p { display:none; }
 body.authenticated #viewContent > .welcome-panel { display:none; }
 body.authenticated #workspace { padding-top:26px; }
+
+/* Centered confirmation for successful withdrawal / Robux requests. */
+.request-notice-modal{width:min(90vw,390px);padding:0;border:1px solid #ffffff22;border-radius:22px;background:#121528;color:var(--text);box-shadow:0 28px 90px #000b;}
+.request-notice-modal::backdrop{background:#050610c9;backdrop-filter:blur(6px)}
+.request-notice-card{padding:28px 24px;text-align:center;display:flex;flex-direction:column;align-items:center;gap:12px}
+.request-notice-icon{display:grid;place-items:center;width:54px;height:54px;border-radius:50%;background:#183c37;color:#73f3c0;font-size:28px;font-weight:800}
+.request-notice-card h2{margin:4px 0 0;font-size:21px}.request-notice-card p{margin:0;color:var(--muted);line-height:1.7;font-size:14px}.request-notice-card .button{min-width:120px;margin-top:5px}.request-notice-card small{font-size:10px;color:var(--muted)}
