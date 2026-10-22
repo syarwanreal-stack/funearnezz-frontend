@@ -8,7 +8,15 @@
 const $ = (selector) => document.querySelector(selector);
 const state = { token: null, user: null, tasks: [], wallet: null, submissions: [], withdrawals: [], robux: [], view: "overview", authMode: "login", busy: false };
 const labels = { overview: ["YOUR ACCOUNT", "Ringkasan akun"], tasks: ["DISCOVER TASKS", "Daftar tugas"], submissions: ["YOUR ACTIVITY", "Riwayat pengajuan"], withdraw: ["PAYOUT REQUEST", "Penarikan saldo"], robux: ["ROBUX REDEMPTION", "Tukar Robux"], admin: ["ADMINISTRATION", "Admin panel"] };
-let toastTimer;
+let toastTimer, noticeModalTimer;
+function showRequestDialog(message) {
+  const dialog = $("#requestNoticeDialog");
+  $("#requestNoticeMessage").textContent = message;
+  if (!dialog.open) dialog.showModal();
+  clearTimeout(noticeModalTimer);
+  noticeModalTimer = setTimeout(() => { if (dialog.open) dialog.close(); }, 3000);
+}
+function closeRequestDialog() { clearTimeout(noticeModalTimer); const dialog = $("#requestNoticeDialog"); if (dialog.open) dialog.close(); }
 
 function escapeHTML(value) {
   return String(value ?? "").replace(/[&<>"']/g, char => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[char]));
@@ -413,7 +421,7 @@ async function submitWithdrawal(event) {
   button.disabled = true; button.textContent = "Mengirim…";
   try {
     await api("/api/withdrawals", { method:"POST", body:JSON.stringify({ method, amount, destination }) });
-    notify("Pengajuan penarikan dikirim."); await loadDashboard(); renderView("submissions");
+    showRequestDialog("Pengajuan penarikan berhasil dikirim. Mohon tunggu, permintaan akan ditinjau dan diproses oleh admin."); await loadDashboard(); renderView("submissions");
   } catch (error) { err.textContent = getMessage(error); err.classList.remove("hidden"); }
   finally { button.disabled = false; button.textContent = "Kirim pengajuan penarikan →"; }
 }
@@ -455,7 +463,7 @@ document.addEventListener("click", event => {
   if (target.dataset.userAdjust) adminAdjust(target.dataset.userAdjust);
 });
 $("#authForm").addEventListener("submit", onAuthSubmit);
-$("#authDialog").addEventListener("click", event => { if (event.target === $("#authDialog")) closeAuth(); });
+$("#authDialog").addEventListener("click", event => { if (event.target === $("#authDialog")) closeAuth(); });\n$("#requestNoticeOk").addEventListener("click", closeRequestDialog);\n$("#requestNoticeDialog").addEventListener("click", event => { if (event.target === $("#requestNoticeDialog")) closeRequestDialog(); });
 document.addEventListener("submit", event => {
   if (event.target.id === "withdrawForm") submitWithdrawal(event);
   else if (event.target.id === "robuxForm") submitRobux(event);
