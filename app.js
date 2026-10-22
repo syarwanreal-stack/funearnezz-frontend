@@ -234,14 +234,28 @@ async function onAuthSubmit(event) {
     const payload = registering ? { username, email: identity.includes("@") ? identity : undefined, password } : { username: identity, email: identity.includes("@") ? identity : undefined, password };
     const result = await api(registering ? "/api/auth/register" : "/api/auth/login", { method:"POST", body:JSON.stringify(payload) });
     const token = result.token || result.accessToken || result.access_token || result.session?.access_token;
-    if (token) saveToken(token);
-    else if (result.user || result.id || result.username) {
-      // Backend yang tidak mengembalikan token mungkin memakai cookie; implementasi cookie harus disesuaikan server-side.
-      throw new Error("Respons API tidak memberikan token sesi yang dikenali. Periksa format respons backend.");
-    } else throw new Error("Respons login/register tidak memiliki token sesi yang dikenali.");
-    state.user = result.user || null;
-    closeAuth(); $("#authForm").reset(); notify(registering ? "Pendaftaran berhasil." : "Login berhasil.");
-    await loadDashboard();
+    const authUser = result.user || (result.id ? result : null);
+    if (token) {
+      saveToken(token);
+      state.user = authUser;
+      closeAuth(); $("#authForm").reset();
+      notify(registering ? "Pendaftaran berhasil." : "Login berhasil.");
+      await loadDashboard();
+    } else if (registering && authUser) {
+      // Supabase returns user without a session when email confirmation is enabled.
+      saveToken(null);
+      state.user = null;
+      closeAuth(); $("#authForm").reset();
+      openAuth("login");
+      const box = $("#authError");
+      box.textContent = "Akun berhasil dibuat. Cek inbox email (termasuk Spam), konfirmasi email, lalu masuk. Jika konfirmasi email dimatikan di Supabase, coba masuk langsung.";
+      box.classList.remove("hidden");
+      renderProfile(); renderView("overview");
+    } else {
+      throw new Error(registering
+        ? "Supabase belum membuat sesi. Periksa email/password dan pengaturan Auth."
+        : "Login tidak mengembalikan sesi. Pastikan email sudah dikonfirmasi dan password benar.");
+    }
   } catch (error) {
     errorBox.textContent = getMessage(error); errorBox.classList.remove("hidden");
   } finally {
