@@ -5,3 +5,6 @@
 .withdraw-tab{min-height:46px;border:1px solid transparent;border-radius:10px;background:transparent;color:#71837b;font-size:13px;font-weight:900;letter-spacing:.5px}
 .withdraw-tab.active{background:#fff;border-color:#dcebe4;color:#08745e;box-shadow:0 2px 8px #163d2b0b}
 .withdraw-tab:focus-visible{outline:3px solid #22a88c55;outline-offset:2px}
+
+/* Native hidden fields must stay hidden despite .field display rules. */
+[hidden]{display:none!important}
