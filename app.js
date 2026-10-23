@@ -344,11 +344,13 @@
     }).join('');
     var fee = numberSetting(config.danaFee, 2000);
     $('#viewRoot').innerHTML =
-      '<section class="panel"><div class="panel-heading"><div><h2>Buat request</h2><p>Request akan masuk antrean admin. Saldo ditahan sampai request diproses.</p></div></div>' +
+      '<section class="panel"><div class="panel-heading"><div><h2>Buat request</h2><p>Pilih jenis penarikan terlebih dahulu. Request akan masuk antrean admin.</p></div></div>' +
+      '<div class="withdraw-tabs" role="tablist" aria-label="Jenis penarikan"><button class="withdraw-tab active" id="tabRobux" type="button" role="tab" aria-selected="true" data-withdraw-tab="robux">ROBUX</button><button class="withdraw-tab" id="tabDana" type="button" role="tab" aria-selected="false" data-withdraw-tab="dana">DANA</button></div>' +
       '<form id="withdrawForm" class="form-grid">' +
-      '<label class="field"><span>Jenis penarikan</span><select id="withdrawType" name="type"><option value="dana">DANA</option><option value="robux">Robux</option></select></label>' +
-      '<label class="field"><span>Nominal saldo yang dipotong (Rp)</span><input id="withdrawAmount" type="number" name="amount" min="1" step="1" required placeholder="Contoh: 10000"></label>' +
-      '<label class="field wide" id="danaDestinationWrap"><span>Nomor DANA</span><input name="destination" inputmode="tel" maxlength="200" placeholder="Nomor akun DANA penerima"></label>' +
+      '<input id="withdrawType" name="type" type="hidden" value="robux">' +
+      '<label class="field" id="danaAmountWrap" hidden><span>Nominal saldo yang dipotong (Rp)</span><input id="withdrawAmount" type="number" name="amount" min="1" step="1" placeholder="Contoh: 10000"></label>' +
+      '<label class="field wide" id="danaDestinationWrap" hidden><span>Nomor DANA</span><input name="destination" inputmode="tel" maxlength="200" placeholder="Nomor akun DANA penerima"></label>' +
+      '<div class="field" id="robuxAmountInfo"><span>Jumlah Robux</span><p class="subtle">Pilih jumlah Robux di bawah. Saldo yang dipotong dihitung otomatis.</p></div>' +
       '<label class="field" id="robuxMethodWrap" hidden><span>Metode Robux</span><select id="robuxMethod" name="method"><option value="gamepass">Game Pass</option><option value="username">Via Username</option></select></label>' +
       '<label class="field" id="robuxCountWrap" hidden><span>Jumlah Robux</span><input id="robuxCount" type="number" name="robux" min="' + esc(numberSetting(config.robuxMin, 10)) + '" step="1" placeholder="Jumlah Robux"></label>' +
       '<label class="field" id="robloxUsernameWrap" hidden><span>Username Roblox</span><input name="robloxUsername" maxlength="100" placeholder="Username Roblox"></label>' +
@@ -360,7 +362,13 @@
     var updateCalc = function () {
       var type = $('#withdrawType').value, amount = Number($('#withdrawAmount').value || 0);
       var method = $('#robuxMethod').value, count = Number($('#robuxCount').value || 0);
+      $('#tabRobux').classList.toggle('active', type === 'robux');
+      $('#tabDana').classList.toggle('active', type === 'dana');
+      $('#tabRobux').setAttribute('aria-selected', String(type === 'robux'));
+      $('#tabDana').setAttribute('aria-selected', String(type === 'dana'));
+      $('#danaAmountWrap').hidden = type !== 'dana';
       $('#danaDestinationWrap').hidden = type !== 'dana';
+      $('#robuxAmountInfo').hidden = type !== 'robux';
       $('#robuxMethodWrap').hidden = type !== 'robux';
       $('#robuxCountWrap').hidden = type !== 'robux';
       $('#robloxUsernameWrap').hidden = type !== 'robux';
@@ -374,7 +382,13 @@
         $('#withdrawCalc').textContent = 'Tarif ' + cash(rate) + ' per Robux. ' + count + ' Robux akan memotong saldo ' + cash(cost) + '. Minimal ' + numberSetting(config.robuxMin, 10) + ' Robux.';
       }
     };
-    ['change', 'input'].forEach(function (evt) { $('#withdrawType').addEventListener(evt, updateCalc); $('#robuxMethod').addEventListener(evt, updateCalc); $('#withdrawAmount').addEventListener(evt, updateCalc); $('#robuxCount').addEventListener(evt, updateCalc); });
+    $('[data-withdraw-tab]').forEach(function (tab) {
+      tab.addEventListener('click', function () {
+        $('#withdrawType').value = tab.dataset.withdrawTab;
+        updateCalc();
+      });
+    });
+    ['change', 'input'].forEach(function (evt) { $('#robuxMethod').addEventListener(evt, updateCalc); $('#withdrawAmount').addEventListener(evt, updateCalc); $('#robuxCount').addEventListener(evt, updateCalc); });
     updateCalc();
     form.addEventListener('submit', async function (event) {
       event.preventDefault();
