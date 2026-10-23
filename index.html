@@ -1,104 +1,72 @@
 <!doctype html>
 <html lang="id">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#090b16">
-  <meta name="description" content="FunEarnEzz — pusat tugas dan reward digital.">
-  <title>FunEarnEzz — Earn. Complete. Grow.</title>
-  <link rel="stylesheet" href="./style.css">
-  <script src="./app.js" defer></script>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#eaf8f4">
+<meta name="description" content="Dashboard tugas dan reward digital.">
+<title>Masuk</title>
+<link rel="stylesheet" href="./style.css">
+<script src="./app.js" defer></script>
 </head>
 <body>
-  <div class="ambient ambient-a"></div><div class="ambient ambient-b"></div>
-  <header class="topbar">
-    <a class="brand" href="#" aria-label="FunEarnEzz beranda">
-      <span class="brand-mark">F<span>+</span></span>
-      <span>FunEarn<span class="brand-accent">Ezz</span><small> EARN · COMPLETE · GROW</small></span>
-    </a>
-    <div class="top-actions">
-      <span class="connection"><i id="connectionDot"></i><span id="connectionText">API belum diatur</span></span>
-      <button class="button button-quiet small" id="openLogin">Masuk</button>
-      <button class="button button-primary small" id="openRegister">Daftar gratis <span>↗</span></button>
+<section id="authScreen" class="auth-screen">
+  <div class="auth-card">
+    <div class="auth-banner">
+      <div class="auth-symbol" aria-hidden="true">＋</div>
+      <h1 id="authHeading">Daftar Akun</h1>
+      <p id="authSubheading">Buat akun untuk mulai mendapatkan reward</p>
     </div>
+    <div class="auth-content">
+      <div id="authNotice" class="inline-message hidden" role="status"></div>
+      <form id="registerForm" class="form-stack">
+        <label class="field"><span>Username</span><input id="registerUsername" name="username" autocomplete="username" minlength="3" maxlength="24" pattern="[A-Za-z0-9_]{3,24}" placeholder="Buat username" required><small>3–24 karakter, huruf, angka, atau underscore.</small></label>
+        <label class="field"><span>Password</span><input id="registerPassword" name="password" type="password" autocomplete="new-password" minlength="8" placeholder="Minimal 8 karakter" required></label>
+        <label class="field"><span>Konfirmasi Password</span><input id="registerConfirm" name="confirm" type="password" autocomplete="new-password" minlength="8" placeholder="Ulangi password" required></label>
+        <button class="button button-primary full" type="submit">Daftar</button>
+      </form>
+      <form id="loginForm" class="form-stack hidden">
+        <label class="field"><span>Username</span><input id="loginUsername" name="username" autocomplete="username" placeholder="Username kamu" required></label>
+        <label class="field"><span>Password</span><input id="loginPassword" name="password" type="password" autocomplete="current-password" placeholder="Password" required></label>
+        <button class="button button-primary full" type="submit">Login</button>
+      </form>
+      <p class="auth-switch"><span id="authSwitchText">Sudah punya akun?</span> <button id="switchAuth" class="text-button" type="button">Login</button></p>
+    </div>
+  </div>
+</section>
+
+<section id="appScreen" class="app-screen hidden">
+  <header class="app-header">
+    <button id="menuButton" class="icon-button" type="button" aria-label="Buka menu" aria-expanded="false"><span class="hamburger"><i></i><i></i><i></i></span></button>
+    <div class="header-balance"><small>Saldo tersedia</small><strong id="headerBalance">Rp0</strong></div>
+    <div class="header-profile"><span id="headerAvatar" class="avatar">U</span><span id="headerUsername">User</span></div>
+    <button id="logoutButton" class="icon-button logout-icon" type="button" aria-label="Keluar">↗</button>
   </header>
-
-  <main>
-    <section class="hero" id="home">
-      <div class="hero-copy">
-        <div class="eyebrow"><span class="sparkle">✦</span> YOUR NEXT DIGITAL REWARD STARTS HERE</div>
-        <h1>Waktu kamu.<br>Usaha kamu.<br><span>Reward kamu.</span></h1>
-        <p class="hero-description">Selesaikan tugas, kirim bukti, dan pantau setiap pengajuan dalam satu dashboard yang simpel.</p>
-        <div class="hero-actions">
-          <button class="button button-primary button-large" id="heroRegister">Mulai sekarang <span>→</span></button>
-          <button class="button button-outline button-large" id="heroLogin">Saya sudah punya akun</button>
-        </div>
-        <div class="trust-row"><span><b>✓</b> Dashboard personal</span><span><b>✓</b> Status transparan</span><span><b>✓</b> Mobile friendly</span></div>
-      </div>
-      <div class="hero-visual" aria-label="Pratinjau dashboard">
-        <div class="orbit orbit-one"></div><div class="orbit orbit-two"></div>
-        <div class="preview-card">
-          <div class="preview-head"><div><span class="mini-label">YOUR OVERVIEW</span><h3>Ringkasan akun</h3></div><span class="avatar">FE</span></div>
-          <div class="balance-panel"><span>Saldo tersedia</span><strong>Rp <span>—</span></strong><small>Saldo akan tampil dari backend setelah login</small><div class="balance-glow"></div></div>
-          <div class="preview-stats"><div><span class="stat-icon cyan">✧</span><div><b>Daftar tugas</b><small>Temukan tugas tersedia</small></div></div><div><span class="stat-icon violet">◷</span><div><b>Riwayat pengajuan</b><small>Pantau status bukti</small></div></div></div>
-          <div class="preview-task"><div class="task-symbol">✦</div><div class="task-lines"><b>Task berikutnya</b><span>Hadiah ditentukan server</span></div><span class="pill pill-blue">TASK</span></div>
-        </div>
-        <div class="float-chip chip-top"><span class="chip-icon">✧</span><span><b>One dashboard</b><small>Semua aktivitasmu</small></span></div>
-        <div class="float-chip chip-bottom"><span class="live-dot"></span><span><b>Built for mobile</b><small>Nyaman dari HP</small></span></div>
-      </div>
-    </section>
-
-    <section class="feature-strip" aria-label="Fitur">
-      <div class="feature"><span class="feature-icon">▦</span><div><b>Tugas terorganisir</b><small>Instruksi dan reward jelas</small></div></div>
-      <div class="feature"><span class="feature-icon">⇧</span><div><b>Kirim bukti</b><small>Unggah gambar dengan mudah</small></div></div>
-      <div class="feature"><span class="feature-icon">◷</span><div><b>Status transparan</b><small>Pending, approved, rejected</small></div></div>
-      <div class="feature"><span class="feature-icon">◇</span><div><b>Penarikan saldo</b><small>Ajukan lewat dashboard</small></div></div>
-    </section>
-
-    <section class="workspace" id="workspace">
-      <div class="section-heading"><div><div class="eyebrow">MEMBER AREA</div><h2>Dashboard kamu<span class="title-dot">.</span></h2><p>Masuk untuk melihat data akun yang benar-benar berasal dari server.</p></div><span class="pill pill-muted" id="sessionBadge">BELUM MASUK</span></div>
-      <div class="dashboard-grid">
-        <aside class="side-card">
-          <div class="profile-row"><div class="profile-avatar" id="profileAvatar">?</div><div><b id="profileName">Guest</b><small id="profileEmail">Masuk untuk melanjutkan</small></div></div>
-          <nav class="side-nav" aria-label="Menu dashboard">
-            <button class="nav-item active" data-view="overview"><span>▦</span> Ringkasan</button>
-            <button class="nav-item" data-view="tasks"><span>✧</span> Daftar tugas</button>
-            <button class="nav-item" data-view="submissions"><span>◷</span> Riwayat pengajuan</button>
-            <button class="nav-item" data-view="withdraw"><span>⇧</span> Penarikan</button>
-            <button class="nav-item" data-view="robux"><span>◇</span> Tukar Robux</button>
-            <button class="nav-item hidden" id="adminNav" data-view="admin"><span>⚙</span> Admin panel</button>
-          </nav>
-          <div class="side-note"><span>✦</span><div><b>Tips keamanan</b><small>Reward dan saldo diverifikasi server, bukan dari browser.</small></div></div>
-          <button class="button button-quiet logout-button hidden" id="logoutButton">Keluar akun ↗</button>
-        </aside>
-        <section class="main-card">
-          <div class="dashboard-toolbar"><div><span class="mini-label" id="viewKicker">YOUR ACCOUNT</span><h3 id="viewTitle">Ringkasan akun</h3></div><button class="button button-quiet small" id="refreshButton">↻ Segarkan</button></div>
-          <div id="notice" class="notice hidden" role="status"></div>
-          <div id="viewContent">
-            <div class="welcome-panel"><div class="welcome-art">✦</div><div><h4>Selamat datang di FunEarnEzz</h4><p>Masuk atau buat akun untuk memuat saldo, tugas, dan riwayatmu dari backend.</p><div class="inline-actions"><button class="button button-primary" id="contentLogin">Masuk</button><button class="button button-outline" id="contentRegister">Buat akun</button></div></div></div>
-            <div class="summary-grid"><div class="summary-box"><span>Saldo tersedia</span><b>—</b><small>Memerlukan login</small></div><div class="summary-box"><span>Pengajuan tugas</span><b>—</b><small>Memerlukan login</small></div><div class="summary-box"><span>Status API</span><b id="apiSummary">Belum diatur</b><small id="apiSummaryHint">Atur URL API di app.js</small></div></div>
-          </div>
-        </section>
-      </div>
-    </section>
-    <footer><a class="brand footer-brand" href="#"><span class="brand-mark">F<span>+</span></span><span>FunEarn<span class="brand-accent">Ezz</span></span></a><span>© <span id="year"></span> FunEarnEzz · Earn. Complete. Grow.</span><a href="#home">Kembali ke atas ↑</a></footer>
+  <div id="drawerShade" class="drawer-shade hidden"></div>
+  <aside id="navDrawer" class="nav-drawer" aria-label="Menu utama">
+    <div class="drawer-head"><span class="drawer-caption">MENU</span><button id="closeMenu" class="icon-button" type="button" aria-label="Tutup menu">×</button></div>
+    <div class="drawer-group"><span class="drawer-group-label">UTAMA</span>
+      <button class="nav-link active" data-view="dashboard" type="button"><span>⌂</span>Dashboard</button>
+      <button class="nav-link" data-view="history" type="button"><span>↺</span>Riwayat</button>
+      <button class="nav-link" data-view="withdraw" type="button"><span>⇧</span>Withdraw</button>
+      <button class="nav-link" data-view="chat" type="button"><span>☷</span>Global Chat</button>
+    </div>
+    <div id="adminNav" class="drawer-group hidden"><span class="drawer-group-label">ADMIN</span>
+      <button class="nav-link" data-view="maintenance" type="button"><span>⚙</span>Maintenance Menu</button>
+      <button class="nav-link" data-view="requests" type="button"><span>⇄</span>Request Withdraw <b id="pendingBadge" class="nav-badge hidden">0</b></button>
+      <button class="nav-link" data-view="codes" type="button"><span>◇</span>Create Unickcode</button>
+      <button class="nav-link" data-view="create-job" type="button"><span>＋</span>Create Job</button>
+      <button class="nav-link" data-view="payout-settings" type="button"><span>◎</span>Setting Penarikan</button>
+    </div>
+    <div class="drawer-foot"><span id="drawerRole">Pengguna</span><button id="drawerLogout" class="nav-link" type="button"><span>↗</span>Keluar akun</button></div>
+  </aside>
+  <main class="app-main">
+    <div class="page-heading"><div><p id="pageEyebrow" class="eyebrow">RUANG KAMU</p><h1 id="pageTitle">Dashboard</h1><p id="pageDescription">Pantau saldo dan tugas yang tersedia.</p></div><button id="refreshButton" class="button button-soft" type="button">Muat ulang</button></div>
+    <div id="viewRoot" class="view-root" aria-live="polite"></div>
   </main>
+</section>
 
-  <dialog id="authDialog" class="modal">
-    <form id="authForm" class="modal-card">
-      <button type="button" class="modal-close" id="closeAuth" aria-label="Tutup">×</button>
-      <div class="modal-logo">F<span>+</span></div><div class="eyebrow" id="authEyebrow">WELCOME BACK</div>
-      <h2 id="authTitle">Masuk akun</h2><p id="authSubtitle">Lanjutkan aktivitas reward kamu.</p>
-      <label id="nameField" class="field hidden">Nama pengguna<input id="authName" autocomplete="username" placeholder="Nama pengguna" minlength="3"></label>
-      <label class="field">Username<input id="authIdentity" autocomplete="username" required placeholder="Masukkan username"></label>
-      <label class="field">Password<input id="authPassword" type="password" autocomplete="current-password" required minlength="8" placeholder="Minimal 8 karakter"></label>
-      <label class="field hidden" id="confirmPasswordField">Konfirmasi password<input id="authConfirmPassword" type="password" autocomplete="new-password" minlength="8" placeholder="Ketik ulang password"></label>
-      <div id="authError" class="form-error hidden" role="alert"></div>
-      <button class="button button-primary button-large full-width" id="authSubmit" type="submit">Masuk <span>→</span></button>
-      <p class="switch-auth" id="authSwitchText">Belum punya akun? <button type="button" id="switchAuth">Daftar gratis</button></p>
-      <small class="privacy-note">Gunakan password unik. Jangan gunakan password akun penting lainnya.</small>
-    </form>
-  </dialog>
-  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+<div id="dialogLayer" class="dialog-layer hidden" role="presentation"></div>
+<div id="liveStatus" class="live-status" aria-live="polite" aria-atomic="true"></div>
 </body>
 </html>
