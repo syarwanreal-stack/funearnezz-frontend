@@ -6,7 +6,7 @@
  */
 
 const $ = (selector) => document.querySelector(selector);
-const state = { token: null, user: null, tasks: [], wallet: null, submissions: [], withdrawals: [], robux: [], view: "overview", authMode: "login", busy: false };
+const state = { token: null, user: null, tasks: [], wallet: null, submissions: [], withdrawals: [], robux: [], maintenance: null, maintenanceDismissedKey: "", view: "overview", authMode: "login", busy: false };
 const labels = { overview: ["YOUR ACCOUNT", "Ringkasan akun"], tasks: ["DISCOVER TASKS", "Daftar tugas"], submissions: ["YOUR ACTIVITY", "Riwayat pengajuan"], withdraw: ["PAYOUT REQUEST", "Penarikan saldo"], robux: ["ROBUX REDEMPTION", "Tukar Robux"], admin: ["ADMINISTRATION", "Admin panel"] };
 let toastTimer;
 
@@ -38,6 +38,56 @@ function showSuccessModal(message) {
   clearTimeout(dialog._autoCloseTimer);
   dialog._autoCloseTimer = setTimeout(() => { if (dialog.open) dialog.close(); }, 3000);
 }
+function localDateTimeInput(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return "";
+  return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0,16);
+}
+function formatMaintenanceTime(value) {
+  if (!value) return "Belum ditentukan";
+  const date = new Date(value);
+  return Number.isFinite(date.getTime())
+    ? date.toLocaleString("id-ID", {dateStyle:"medium",timeStyle:"short"})
+    : String(value);
+}
+function showMaintenanceModal(status) {
+  let dialog = $("#maintenanceDialog");
+  if (!dialog) {
+    dialog = document.createElement("dialog");
+    dialog.id = "maintenanceDialog";
+    dialog.style.cssText = "border:1px solid #35405d;border-radius:18px;background:#11182b;color:#fff;padding:26px;max-width:min(92vw,460px);text-align:center";
+    dialog.innerHTML = '<div style="font-size:34px" aria-hidden="true">🛠️</div><h2 style="margin:10px 0">Website sedang maintenance</h2><p id="maintenanceReason" style="line-height:1.6"></p><p style="font-size:13px;color:#abb4cf">Perkiraan dibuka kembali: <span id="maintenanceReopenAt"></span></p><button id="maintenanceOk" class="button button-primary" type="button">Mengerti</button>';
+    document.body.appendChild(dialog);
+    const dismiss = () => {
+      state.maintenanceDismissedKey = [state.maintenance?.reason || "", state.maintenance?.reopenAt || ""].join("|");
+      if (dialog.open) dialog.close();
+    };
+    dialog.addEventListener("click", event => {
+      if (event.target === dialog || event.target.id === "maintenanceOk") dismiss();
+    });
+    dialog.addEventListener("cancel", dismiss);
+  }
+  $("#maintenanceReason").textContent = status.reason || "Sistem sedang dalam pemeliharaan.";
+  $("#maintenanceReopenAt").textContent = formatMaintenanceTime(status.reopenAt);
+  if (!dialog.open) dialog.showModal();
+}
+async function checkMaintenance(force = false) {
+  try {
+    const status = await api("/api/maintenance");
+    state.maintenance = status;
+    const key = [status.reason || "", status.reopenAt || ""].join("|");
+    const dialog = $("#maintenanceDialog");
+    if (!status.enabled) {
+      if (dialog?.open) dialog.close();
+      state.maintenanceDismissedKey = "";
+      return;
+    }
+    if (force || state.maintenanceDismissedKey !== key) showMaintenanceModal(status);
+  } catch (error) {
+    console.warn("Gagal memeriksa status maintenance:", getMessage(error));
+  }
+}
 function setNotice(message = "", type = "info") {
   const el = $("#notice");
   if (!message) { el.className = "notice hidden"; el.textContent = ""; return; }
@@ -58,14 +108,20 @@ async function api(path, options = {}) {
   const token = getToken();
   if (token) headers.set("Authorization", `Bearer ${token}`);
   if (options.body && !(options.body instanceof FormData) && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
-  const response = await fetch(path, { ...options, headers, credentials: "same-origin" });
+  let response;
+  try {
+    response = await fetch(path, { ...options, headers, credentials: "same-origin" });
+  } catch (cause) {
+    const error = new Error(`Koneksi API gagal pada ${path}. Pastikan situs dibuka dari domain Cloudflare Worker yang benar dan deployment API aktif. Detail browser: ${cause?.message || "request diblokir"}`);
+    error.name = "ApiNetworkError";
+    throw error;
+  }
   const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data.error || data.message || `Request failed (${response.status})`);
+  if (!response.ok) throw new Error(data.error || data.message || `Request gagal (${response.status}) pada ${path}`);
   return data;
 }
 
 function getMessage(error) {
-  if (error instanceof TypeError) return "Gagal menghubungi API. Periksa HTTPS, URL backend, koneksi server, dan konfigurasi CORS.";
   return error?.message || "Terjadi kesalahan yang tidak diketahui.";
 }
 function statusLabel(status) {
@@ -146,9 +202,9 @@ function renderSubmissions() {
 function renderWithdraw() {
   $("#viewContent").innerHTML = `<p style="color:#9ba4c0;font-size:11px;line-height:1.7;margin-top:18px">Ajukan penarikan menggunakan saldo yang diverifikasi server. Pastikan tujuan benar. Nilai minimum, biaya, dan aturan penarikan tetap ditentukan backend.</p>
     <form id="withdrawForm" class="form-grid">
-      <label class="field">Metode penarikan<select name="method" required><option value="DANA">DANA</option><option value="Robux">Robux</option></select></label>
+      <label class="field">Metode penarikan<select name="method" required><option value="DANA">DANA</option></select><span class="field-hint">Penukaran Robux tersedia di menu Tukar Robux agar masuk ke antrean Robux admin.</span></label>
       <label class="field">Jumlah<input name="amount" type="number" min="1" step="1" inputmode="numeric" required placeholder="Masukkan jumlah"><span class="field-hint">Jumlah akan divalidasi kembali oleh server. Jangan mengandalkan angka di browser.</span></label>
-      <label class="field">Tujuan penarikan<input name="destination" required maxlength="160" placeholder="Nomor DANA atau username Roblox"><span class="field-hint">Jangan isi password atau kode OTP akun.</span></label>
+      <label class="field">Nomor/tujuan DANA<input name="destination" required maxlength="160" placeholder="Nomor DANA"><span class="field-hint">Jangan isi password atau kode OTP akun.</span></label>
       <div id="withdrawError" class="form-error hidden" role="alert"></div>
       <button class="button button-primary" type="submit">Kirim pengajuan penarikan →</button>
     </form>`;
@@ -220,7 +276,7 @@ async function renderAdmin() {
         <label class="field">Tarif Username per Robux (Rp)<input name="usernameRate" type="number" min="1" step="1" value="${escapeHTML(cfg.usernameRate ?? 230)}" required></label>
         <label class="field"><span><input name="maintenanceEnabled" type="checkbox" style="width:auto;margin-right:8px" ${String(cfg.maintenanceEnabled ?? false) === "true" ? "checked" : ""}>Aktifkan maintenance</span></label>
         <label class="field">Alasan maintenance<input name="maintenanceReason" maxlength="300" value="${escapeHTML(cfg.maintenanceReason ?? "Sistem sedang dalam pemeliharaan.")}"></label>
-        <label class="field">Dibuka kembali (opsional)<input name="maintenanceReopenAt" type="datetime-local" value="${escapeHTML(cfg.maintenanceReopenAt ?? "")}"></label>
+        <label class="field">Dibuka kembali (opsional)<input name="maintenanceReopenAt" type="datetime-local" value="${escapeHTML(localDateTimeInput(cfg.maintenanceReopenAt ?? ""))}"><span class="field-hint">Waktu memakai zona waktu perangkat.</span></label>
         <div id="adminSettingsError" class="form-error hidden" role="alert"></div>
         <button class="button button-primary" type="submit">Simpan pengaturan</button>
       </form>`;
@@ -255,10 +311,12 @@ async function submitAdminJob(event) {
 async function saveAdminSettings(event) {
   event.preventDefault(); if(state.user?.role!=="admin") return;
   const form=event.currentTarget, err=$("#adminSettingsError"), button=form.querySelector('button[type="submit"]');
-  const values={robuxMin:Number(form.elements.robuxMin.value),gamepassRate:Number(form.elements.gamepassRate.value),usernameRate:Number(form.elements.usernameRate.value),maintenanceEnabled:form.elements.maintenanceEnabled.checked,maintenanceReason:form.elements.maintenanceReason.value.trim(),maintenanceReopenAt:form.elements.maintenanceReopenAt.value};
-  if(Object.values(values).some(value=>!Number.isSafeInteger(value)||value<1)){err.textContent="Semua nilai harus bilangan bulat positif.";err.classList.remove("hidden");return;}
+  const values={robuxMin:Number(form.elements.robuxMin.value),gamepassRate:Number(form.elements.gamepassRate.value),usernameRate:Number(form.elements.usernameRate.value),maintenanceEnabled:form.elements.maintenanceEnabled.checked,maintenanceReason:form.elements.maintenanceReason.value.trim(),maintenanceReopenAt:form.elements.maintenanceReopenAt.value ? new Date(form.elements.maintenanceReopenAt.value).toISOString() : ""};
+  const numericValues=[values.robuxMin,values.gamepassRate,values.usernameRate];
+  if(numericValues.some(value=>!Number.isSafeInteger(value)||value<1)){err.textContent="Minimal Robux dan semua tarif harus bilangan bulat positif.";err.classList.remove("hidden");return;}
+  if(values.maintenanceReopenAt && !Number.isFinite(new Date(values.maintenanceReopenAt).getTime())){err.textContent="Waktu buka kembali tidak valid.";err.classList.remove("hidden");return;}
   err.classList.add("hidden");button.disabled=true;
-  try { await api("/api/admin/settings",{method:"POST",body:JSON.stringify(values)}); notify("Pengaturan berhasil disimpan."); await renderAdmin(); }
+  try { await api("/api/admin/settings",{method:"POST",body:JSON.stringify(values)}); await checkMaintenance(true); notify("Pengaturan berhasil disimpan."); await renderAdmin(); }
   catch(error){err.textContent=getMessage(error);err.classList.remove("hidden");}
   finally{button.disabled=false;}
 }
@@ -406,8 +464,14 @@ async function submitProof(taskId) {
     event.preventDefault();
     const form = event.currentTarget, file = form.elements.proof.files[0], err = $("#proofError"), button = form.querySelector('button[type="submit"]');
     err.classList.add("hidden");
-    if (!file || !file.type.startsWith("image/")) { err.textContent = "Pilih file gambar yang valid."; err.classList.remove("hidden"); return; }
-    const body = new FormData(); body.append("taskId", String(taskId)); body.append("note", form.elements.note.value.trim()); body.append("proof", file);
+    if (task.photo_required && !file) { err.textContent = "Tugas ini mewajibkan foto bukti."; err.classList.remove("hidden"); return; }
+    if (file && !["image/jpeg","image/png","image/webp"].includes(String(file.type || "").toLowerCase())) {
+      err.textContent = "Format foto harus JPG, PNG, atau WEBP.";
+      err.classList.remove("hidden"); return;
+    }
+    if (file && file.size > 5 * 1024 * 1024) { err.textContent = "Ukuran foto maksimal 5 MB."; err.classList.remove("hidden"); return; }
+    const body = new FormData(); body.append("taskId", String(taskId)); body.append("note", form.elements.note.value.trim());
+    if (file) body.append("proof", file);
     button.disabled = true; button.textContent = "Mengirim…";
     try {
       await api(`/api/jobs/${encodeURIComponent(taskId)}/submit`, { method:"POST", body });
