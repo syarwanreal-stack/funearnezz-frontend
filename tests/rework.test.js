@@ -17,7 +17,7 @@ test("initial route is a full-screen registration/login screen without branded l
 
 test("the dashboard uses a hamburger drawer and separates user and admin views", async () => {
   const html = await read("index.html");
-  for (const view of ["dashboard", "history", "withdraw", "chat", "maintenance", "requests", "codes", "create-job", "payout-settings"]) {
+  for (const view of ["dashboard", "history", "withdraw", "chat", "maintenance", "requests", "codes", "create-job", "review-jobs", "payout-settings"]) {
     assert.match(html, new RegExp('data-view="' + view + '"'));
   }
   assert.match(html, /id="menuButton"/);
