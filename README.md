@@ -41,3 +41,11 @@ npm run check
 npm test
 ```
 GitHub Actions runs the same syntax and mocked-Supabase contract tests for pull requests. These tests do not prove that your live Supabase project has been configured; after applying the SQL and setting Cloudflare secrets, verify `/api/health`, then test registration, login, proof upload, withdrawal reservation/refund, and each admin review workflow against the actual project before accepting real users or handling real payouts.
+
+## PR #21 product rework (existing production project)
+
+For an existing deployed Supabase project, run `supabase/migrations/202610230003_pr21_product_rework.sql` in the Supabase SQL Editor **before** deploying this branch. This migration is additive: it preserves user balances, account records, existing requests and ledger rows. It adds job quotas, DANA payout/fee fields, Unickcode redemption, global chat, and chat mutes. Do not rerun `supabase/schema.sql` against a populated production database as a substitute.
+
+The rebuilt UI starts on registration (username + password), then routes authenticated users directly to the dashboard. The hamburger menu contains user workflows and the grouped admin screens. Admin/staff role is assigned explicitly in `profiles`; registration never grants a privileged role. Only admins can manage payouts/settings/codes/jobs; staff is allowed to moderate chat.
+
+The browser notification control asks for the permission and polls the queue only while the admin page is open. It is not a service-worker push subscription and cannot guarantee alerts after the site/browser is closed. After applying the migration and deploying, verify a real test account end-to-end before handling payouts: code reward/cap, job quota/rejected slot release, both Robux methods, DANA fee math and rejection refund, global chat mute expiry, and maintenance/announcement visibility.

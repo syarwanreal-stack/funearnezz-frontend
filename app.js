@@ -1,545 +1,762 @@
-/*
- * FunEarnEzz frontend.
- * API dilayani oleh Cloudflare Worker pada origin yang sama.
- * Isi SUPABASE_URL dan SUPABASE_SERVICE_ROLE_KEY sebagai Worker secrets di Cloudflare,
- * bukan di file frontend ini. Jangan pernah mengirim service-role key ke browser.
- */
-
-const $ = (selector) => document.querySelector(selector);
-const state = { token: null, user: null, tasks: [], wallet: null, submissions: [], withdrawals: [], robux: [], maintenance: null, maintenanceDismissedKey: "", view: "overview", authMode: "login", busy: false };
-const labels = { overview: ["YOUR ACCOUNT", "Ringkasan akun"], tasks: ["DISCOVER TASKS", "Daftar tugas"], submissions: ["YOUR ACTIVITY", "Riwayat pengajuan"], withdraw: ["PAYOUT REQUEST", "Penarikan saldo"], robux: ["ROBUX REDEMPTION", "Tukar Robux"], admin: ["ADMINISTRATION", "Admin panel"] };
-let toastTimer;
-
-function escapeHTML(value) {
-  return String(value ?? "").replace(/[&<>"']/g, char => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[char]));
-}
-function money(value, currency = "IDR") {
-  const number = Number(value);
-  if (!Number.isFinite(number)) return "—";
-  try { return new Intl.NumberFormat("id-ID", { style:"currency", currency, maximumFractionDigits: currency === "IDR" ? 0 : 2 }).format(number); }
-  catch { return `${currency} ${number.toLocaleString("id-ID")}`; }
-}
-function notify(message) {
-  const el = $("#toast"); el.textContent = message; el.classList.add("show");
-  clearTimeout(toastTimer); toastTimer = setTimeout(() => el.classList.remove("show"), 3200);
-}
-function showSuccessModal(message) {
-  let dialog = $("#successDialog");
-  if (!dialog) {
-    dialog = document.createElement("dialog");
-    dialog.id = "successDialog";
-    dialog.style.cssText = "border:1px solid #35405d;border-radius:18px;background:#11182b;color:#fff;padding:28px;max-width:90vw;text-align:center";
-    dialog.innerHTML = '<h3>Berhasil</h3><p id="successDialogMessage"></p><button id="successDialogOk" class="button button-primary" type="button">OK</button>';
-    document.body.appendChild(dialog);
-    dialog.addEventListener("click", e => { if (e.target === dialog || e.target.id === "successDialogOk") dialog.close(); });
-  }
-  $("#successDialogMessage").textContent = message;
-  if (!dialog.open) dialog.showModal();
-  clearTimeout(dialog._autoCloseTimer);
-  dialog._autoCloseTimer = setTimeout(() => { if (dialog.open) dialog.close(); }, 3000);
-}
-function localDateTimeInput(value) {
-  if (!value) return "";
-  const date = new Date(value);
-  if (!Number.isFinite(date.getTime())) return "";
-  return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0,16);
-}
-function formatMaintenanceTime(value) {
-  if (!value) return "Belum ditentukan";
-  const date = new Date(value);
-  return Number.isFinite(date.getTime())
-    ? date.toLocaleString("id-ID", {dateStyle:"medium",timeStyle:"short"})
-    : String(value);
-}
-function showMaintenanceModal(status) {
-  let dialog = $("#maintenanceDialog");
-  if (!dialog) {
-    dialog = document.createElement("dialog");
-    dialog.id = "maintenanceDialog";
-    dialog.style.cssText = "border:1px solid #35405d;border-radius:18px;background:#11182b;color:#fff;padding:26px;max-width:min(92vw,460px);text-align:center";
-    dialog.innerHTML = '<div style="font-size:34px" aria-hidden="true">🛠️</div><h2 style="margin:10px 0">Website sedang maintenance</h2><p id="maintenanceReason" style="line-height:1.6"></p><p style="font-size:13px;color:#abb4cf">Perkiraan dibuka kembali: <span id="maintenanceReopenAt"></span></p><button id="maintenanceOk" class="button button-primary" type="button">Mengerti</button>';
-    document.body.appendChild(dialog);
-    const dismiss = () => {
-      state.maintenanceDismissedKey = [state.maintenance?.reason || "", state.maintenance?.reopenAt || ""].join("|");
-      if (dialog.open) dialog.close();
-    };
-    dialog.addEventListener("click", event => {
-      if (event.target === dialog || event.target.id === "maintenanceOk") dismiss();
+'use strict';
+(function () {
+  var $ = function (selector, root) { return (root || document).querySelector(selector); };
+  var $$ = function (selector, root) { return Array.prototype.slice.call((root || document).querySelectorAll(selector)); };
+  var state = { user: null, view: 'dashboard', config: {}, data: {}, maintenance: null, dialogTimer: null, pendingCount: null, notificationReady: false, pollTimer: null, chatTimer: null };
+  var viewMeta = {
+    dashboard: ['RUANG KAMU', 'Dashboard', 'Pantau saldo dan tugas yang tersedia.'],
+    history: ['AKTIVITAS', 'Riwayat', 'Catatan saldo masuk, saldo keluar, dan status pengajuan.'],
+    withdraw: ['PENARIKAN', 'Withdraw', 'Pilih DANA atau Robux, lalu cek potongan saldo sebelum mengirim.'],
+    chat: ['KOMUNITAS', 'Global Chat', 'Berbagi info dengan sopan. Promosi dan spam tidak diperbolehkan.'],
+    maintenance: ['PENGATURAN ADMIN', 'Maintenance Menu', 'Kelola maintenance dan pengumuman untuk semua pengguna.'],
+    requests: ['ANTREAN ADMIN', 'Request Withdraw', 'Request DANA dan Robux tampil bersama dalam satu antrean.'],
+    codes: ['REWARD ADMIN', 'Create Unickcode', 'Buat kode saldo dengan batas jumlah penerima.'],
+    'create-job': ['TUGAS ADMIN', 'Create Job', 'Buat tugas dengan reward, link, kuota, dan pengaturan bukti foto.'],
+    'review-jobs': ['ANTREAN JOB', 'Review Job', 'Periksa bukti kerja dan setujui reward atau tolak dengan alasan.'],
+    'payout-settings': ['PENGATURAN ADMIN', 'Setting Penarikan', 'Atur tarif Robux dan biaya admin DANA.']
+  };
+  var cash = function (value) {
+    var n = Number(value || 0);
+    if (!Number.isFinite(n)) return 'Rp0';
+    return 'Rp' + Math.round(n).toLocaleString('id-ID');
+  };
+  var esc = function (value) {
+    return String(value == null ? '' : value).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
     });
-    dialog.addEventListener("cancel", dismiss);
-  }
-  $("#maintenanceReason").textContent = status.reason || "Sistem sedang dalam pemeliharaan.";
-  $("#maintenanceReopenAt").textContent = formatMaintenanceTime(status.reopenAt);
-  if (!dialog.open) dialog.showModal();
-}
-async function checkMaintenance(force = false) {
-  try {
-    const status = await api("/api/maintenance");
-    state.maintenance = status;
-    const key = [status.reason || "", status.reopenAt || ""].join("|");
-    const dialog = $("#maintenanceDialog");
-    if (!status.enabled) {
-      if (dialog?.open) dialog.close();
-      state.maintenanceDismissedKey = "";
+  };
+  var date = function (value) {
+    if (!value) return '—';
+    var d = new Date(value);
+    return Number.isNaN(d.getTime()) ? String(value) : d.toLocaleString('id-ID', { dateStyle: 'medium', timeStyle: 'short' });
+  };
+  var api = async function (path, options) {
+    options = options || {};
+    var headers = new Headers(options.headers || {});
+    if (options.body && !(options.body instanceof FormData) && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
+    var response;
+    try {
+      response = await fetch(path, Object.assign({}, options, { headers: headers, credentials: 'same-origin', cache: 'no-store' }));
+    } catch (e) {
+      throw new Error('Koneksi terganggu. Cek internet lalu coba lagi.');
+    }
+    var data = await response.json().catch(function () { return {}; });
+    if (!response.ok) throw new Error(data.error || data.message || ('Request gagal (' + response.status + ').'));
+    return data;
+  };
+  var say = function (message) {
+    var node = $('#liveStatus');
+    if (!node) return;
+    node.textContent = message;
+    node.classList.add('show');
+    clearTimeout(node._timer);
+    node._timer = setTimeout(function () { node.classList.remove('show'); }, 2800);
+  };
+  var closeDialog = function () {
+    var layer = $('#dialogLayer');
+    if (!layer || layer.classList.contains('hidden')) return;
+    clearTimeout(state.dialogTimer);
+    var callback = layer._onClose;
+    layer._onClose = null;
+    layer.classList.add('hidden');
+    layer.innerHTML = '';
+    if (typeof callback === 'function') callback();
+  };
+  var showDialog = function (title, message, options) {
+    options = options || {};
+    closeDialog();
+    var layer = $('#dialogLayer');
+    var locked = !!options.locked;
+    layer._onClose = options.onClose || null;
+    layer.innerHTML = '<section class="dialog-card" role="dialog" aria-modal="true" aria-labelledby="dialogTitle">' +
+      '<div class="dialog-icon ' + esc(options.kind || '') + '">' + esc(options.icon || (options.kind === 'error' ? '×' : options.kind === 'warning' ? '!' : '✓')) + '</div>' +
+      '<h2 id="dialogTitle">' + esc(title) + '</h2><p>' + esc(message) + '</p>' +
+      (locked ? '' : '<div class="dialog-actions"><button id="dialogOk" class="button button-primary" type="button">OK</button></div>') +
+      '</section>';
+    layer.classList.remove('hidden');
+    if (!locked) $('#dialogOk').addEventListener('click', closeDialog);
+    if (!locked && Number(options.autoMs) > 0) state.dialogTimer = setTimeout(closeDialog, Number(options.autoMs));
+  };
+  var showPrompt = function (title, message, placeholder, callback) {
+    closeDialog();
+    var layer = $('#dialogLayer');
+    layer.innerHTML = '<section class="dialog-card" role="dialog" aria-modal="true" aria-labelledby="dialogTitle"><div class="dialog-icon error">×</div><h2 id="dialogTitle">' + esc(title) + '</h2><p>' + esc(message) + '</p><div class="dialog-fields"><label class="field"><span>Alasan penolakan</span><textarea id="rejectReason" maxlength="1000" required placeholder="' + esc(placeholder || 'Tuliskan alasan yang jelas') + '"></textarea></label></div><div class="dialog-actions"><button id="promptCancel" class="button button-outline" type="button">Batal</button><button id="promptSubmit" class="button button-danger" type="button">Kirim penolakan</button></div></section>';
+    layer.classList.remove('hidden');
+    $('#promptCancel').addEventListener('click', closeDialog);
+    $('#promptSubmit').addEventListener('click', async function () {
+      var reason = $('#rejectReason').value.trim();
+      if (!reason) { $('#rejectReason').focus(); say('Alasan penolakan wajib diisi.'); return; }
+      var button = $('#promptSubmit');
+      button.disabled = true;
+      button.textContent = 'Mengirim…';
+      try {
+        var outcome = await callback(reason);
+        closeDialog();
+        if (outcome && outcome.title) showDialog(outcome.title, outcome.message || 'Selesai.', outcome.options || { autoMs: 3000 });
+      } catch (error) {
+        button.disabled = false; button.textContent = 'Kirim penolakan';
+        showDialog('Belum berhasil', error.message, { kind: 'error' });
+      }
+    });
+  };
+  var setAuthMode = function (mode) {
+    var register = mode === 'register';
+    $('#registerForm').classList.toggle('hidden', !register);
+    $('#loginForm').classList.toggle('hidden', register);
+    $('#authHeading').textContent = register ? 'Daftar Akun' : 'Masuk';
+    $('#authSubheading').textContent = register ? 'Buat akun untuk mulai mendapatkan reward' : 'Masuk untuk melanjutkan';
+    $('#authSwitchText').textContent = register ? 'Sudah punya akun?' : 'Belum punya akun?';
+    $('#switchAuth').textContent = register ? 'Login' : 'Daftar sekarang';
+    $('#authNotice').classList.add('hidden');
+    $('#authNotice').textContent = '';
+  };
+  var authMessage = function (text) {
+    $('#authNotice').textContent = text;
+    $('#authNotice').classList.remove('hidden');
+  };
+  var setLoggedOut = function () {
+    state.user = null;
+    $('#appScreen').classList.add('hidden');
+    $('#authScreen').classList.remove('hidden');
+    closeMenu();
+    setAuthMode('register');
+    clearInterval(state.pollTimer);
+    clearInterval(state.chatTimer);
+    state.chatTimer = null;
+  };
+  var setLoggedIn = function (user) {
+    state.user = user;
+    $('#authScreen').classList.add('hidden');
+    $('#appScreen').classList.remove('hidden');
+    $('#headerUsername').textContent = user.username || 'Pengguna';
+    $('#headerAvatar').textContent = String(user.username || 'U').slice(0, 1).toUpperCase();
+    $('#drawerRole').textContent = user.role === 'admin' ? 'Administrator' : user.role === 'staff' ? 'Staff' : 'Pengguna';
+    $('#adminNav').classList.toggle('hidden', user.role !== 'admin');
+    startRequestPolling();
+    applyMaintenance();
+    return navigate('dashboard');
+  };
+  var getConfig = async function () {
+    try {
+      var result = await api('/api/config');
+      state.config = result.settings || {};
+      state.config.robuxMin = numberSetting(state.config.robuxMin, 10);
+      state.config.gamepassRate = numberSetting(state.config.gamepassRate, 170);
+      state.config.usernameRate = numberSetting(state.config.usernameRate, 230);
+      state.config.danaFee = numberSetting(state.config.danaFee, 2000);
+    } catch (e) { state.config = { robuxMin: 10, gamepassRate: 170, usernameRate: 230, danaFee: 2000 }; }
+    return state.config;
+  };
+  var numberSetting = function (value, fallback) {
+    var n = Number(value);
+    return Number.isFinite(n) && n >= 0 ? n : fallback;
+  };
+  var applyMaintenance = async function () {
+    try {
+      var data = await api('/api/maintenance');
+      state.maintenance = data;
+      if (data.enabled) {
+        var suffix = data.reopenAt ? '\nPerkiraan dibuka kembali: ' + date(data.reopenAt) : '';
+        var heading = $('#dialogLayer .dialog-card h2');
+        if (!state.user) {
+          if (heading && heading.textContent === 'Website sedang maintenance') closeDialog();
+        } else {
+          var locked = state.user.role !== 'admin';
+          if ($('#dialogLayer').classList.contains('hidden') || !heading || heading.textContent !== 'Website sedang maintenance' || $('#dialogLayer').dataset.maintenanceLocked !== String(locked)) {
+            showDialog('Website sedang maintenance', (data.reason || 'Sistem sedang dalam pemeliharaan.') + suffix, { locked: locked, kind: 'warning', icon: '⚙' });
+            $('#dialogLayer').dataset.maintenanceLocked = String(locked);
+          }
+        }
+      } else if ($('#dialogLayer .dialog-card h2') && $('#dialogLayer .dialog-card h2').textContent === 'Website sedang maintenance') closeDialog();
+    } catch (e) {
+      state.maintenance = { enabled: false };
+    }
+    try {
+      var cfg = await getConfig();
+      if (String(cfg.announcementEnabled) === 'true' || cfg.announcementEnabled === true) {
+        var key = String(cfg.announcementUpdatedAt || cfg.announcementMessage || '');
+        if (key && sessionStorage.getItem('fe_announcement_seen') !== key) {
+          sessionStorage.setItem('fe_announcement_seen', key);
+          if (!state.maintenance || !state.maintenance.enabled) showDialog(String(cfg.announcementTitle || 'Pengumuman'), String(cfg.announcementMessage || 'Ada informasi baru.'), { autoMs: 3000 });
+        }
+      }
+    } catch (e) { /* pengumuman gagal dimuat tidak memblokir login */ }
+  };
+  var closeMenu = function () {
+    $('#navDrawer').classList.remove('open');
+    $('#drawerShade').classList.add('hidden');
+    $('#menuButton').setAttribute('aria-expanded', 'false');
+  };
+  var toggleMenu = function (open) {
+    var shouldOpen = typeof open === 'boolean' ? open : !$('#navDrawer').classList.contains('open');
+    $('#navDrawer').classList.toggle('open', shouldOpen);
+    $('#drawerShade').classList.toggle('hidden', !shouldOpen);
+    $('#menuButton').setAttribute('aria-expanded', String(shouldOpen));
+  };
+  var navigate = async function (view) {
+    if (!viewMeta[view]) view = 'dashboard';
+    if (!state.user) return;
+    if (view !== 'dashboard' && view !== 'history' && view !== 'withdraw' && view !== 'chat' && state.user.role !== 'admin') {
+      showDialog('Akses dibatasi', 'Menu ini khusus admin.', { kind: 'error' });
       return;
     }
-    if (force || state.maintenanceDismissedKey !== key) showMaintenanceModal(status);
-  } catch (error) {
-    console.warn("Gagal memeriksa status maintenance:", getMessage(error));
-  }
-}
-function setNotice(message = "", type = "info") {
-  const el = $("#notice");
-  if (!message) { el.className = "notice hidden"; el.textContent = ""; return; }
-  el.className = `notice ${type}`; el.textContent = message;
-}
-function setConnection(kind, text) {
-  const el = $(".connection"); el.classList.remove("online", "offline");
-  if (kind === "online") el.classList.add("online");
-  if (kind === "offline") el.classList.add("offline");
-  $("#connectionText").textContent = text;
-  $("#apiSummary").textContent = kind === "online" ? "Backend siap" : kind === "offline" ? "Belum tersedia" : "Frontend siap";
-  $("#apiSummaryHint").textContent = kind === "online" ? "Health check backend berhasil" : kind === "offline" ? "Backend belum dikonfigurasi" : "Supabase disambungkan setelah desain disetujui";
-}
-function getToken() { return state.token || sessionStorage.getItem("fe_token"); }
-function saveToken(token) { state.token = token; if (token) sessionStorage.setItem("fe_token", token); else sessionStorage.removeItem("fe_token"); }
-async function api(path, options = {}) {
-  const headers = new Headers(options.headers || {});
-  const token = getToken();
-  if (token) headers.set("Authorization", `Bearer ${token}`);
-  if (options.body && !(options.body instanceof FormData) && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
-  let response;
-  try {
-    response = await fetch(path, { ...options, headers, credentials: "same-origin" });
-  } catch (cause) {
-    const error = new Error(`Koneksi API gagal pada ${path}. Pastikan situs dibuka dari domain Cloudflare Worker yang benar dan deployment API aktif. Detail browser: ${cause?.message || "request diblokir"}`);
-    error.name = "ApiNetworkError";
-    throw error;
-  }
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data.error || data.message || `Request gagal (${response.status}) pada ${path}`);
-  return data;
-}
-
-function getMessage(error) {
-  return error?.message || "Terjadi kesalahan yang tidak diketahui.";
-}
-function statusLabel(status) {
-  const value = String(status || "pending").toLowerCase();
-  if (["approved","accepted","success","completed","paid"].includes(value)) return ["approved","Disetujui"];
-  if (["rejected","declined","failed"].includes(value)) return ["rejected","Ditolak"];
-  return ["pending","Menunggu"];
-}
-function emptyState(icon, title, description, action = "") {
-  return `<div class="empty-state"><div class="empty-icon">${icon}</div><h4>${escapeHTML(title)}</h4><p>${escapeHTML(description)}</p>${action}</div>`;
-}
-function requireLogin() {
-  if (state.user) return true;
-  renderView("overview");
-  setNotice("Masuk ke akun untuk memuat data dashboard.", "info");
-  openAuth("login");
-  return false;
-}
-function renderProfile() {
-  const user = state.user;
-  $("#profileName").textContent = user ? (user.username || user.name || user.email || "Member") : "Guest";
-  $("#profileEmail").textContent = user ? (user.email || `@${user.username || "member"}`) : "Masuk untuk melanjutkan";
-  $("#profileAvatar").textContent = user ? String(user.username || user.name || "FE").slice(0,2).toUpperCase() : "?";
-  $("#sessionBadge").textContent = user ? "SUDAH MASUK" : "BELUM MASUK";
-  $("#logoutButton").classList.toggle("hidden", !user);
-  $("#adminNav").classList.toggle("hidden", user?.role !== "admin");
-}
-function renderOverview() {
-  const wallet = state.wallet || {};
-  const amount = wallet.availableBalance ?? wallet.available_balance ?? wallet.balance ?? wallet.available ?? null;
-  const count = state.submissions.length;
-  $("#viewContent").innerHTML = `
-    <div class="welcome-panel"><div class="welcome-art">✦</div><div><h4>Halo, ${escapeHTML(state.user?.username || state.user?.name || "Member")}!</h4><p>Data akun di bawah dimuat dari backend. Nilai saldo tidak dihitung atau disimpan di browser.</p></div></div>
-    <div class="summary-grid">
-      <div class="summary-box"><span>Saldo tersedia</span><b>${amount === null ? "—" : escapeHTML(money(amount, wallet.currency || "IDR"))}</b><small>Data dari endpoint wallet</small></div>
-      <div class="summary-box"><span>Pengajuan dimuat</span><b>${count}</b><small>Jumlah data pada riwayat yang dimuat</small></div>
-      <div class="summary-box"><span>Tugas tersedia</span><b>${state.tasks.length}</b><small>Data dari endpoint tasks</small></div>
-    </div>
-    <div class="inline-actions"><button class="button button-primary" data-goto="tasks">Jelajahi tugas →</button><button class="button button-outline" data-goto="submissions">Lihat riwayat</button></div>`;
-}
-function renderTasks() {
-  const tasks = state.tasks;
-  if (!tasks.length) {
-    $("#viewContent").innerHTML = emptyState("✧", "Belum ada tugas untuk ditampilkan", "Server belum mengirim daftar tugas, atau memang belum ada tugas aktif. Coba segarkan beberapa saat lagi.");
-    return;
-  }
-  $("#viewContent").innerHTML = `<div class="stack">${tasks.map(task => {
-    const id = task.id ?? task.taskId ?? task.task_id;
-    const title = task.title || task.name || "Tugas";
-    const desc = task.description || task.instructions || task.instruction || "Tidak ada deskripsi.";
-    const reward = task.reward ?? task.amount ?? task.rewardAmount ?? task.reward_amount;
-    return `<article class="data-card"><div class="data-card-head"><div><h4>${escapeHTML(title)}</h4><p>${escapeHTML(desc)}</p></div><span class="status approved">${reward == null ? "Reward —" : escapeHTML(money(reward, task.currency || "IDR"))}</span></div><div class="meta-row"><span class="tag">${escapeHTML(task.category || "Umum")}</span><span class="tag">ID: ${escapeHTML(id ?? "—")}</span></div><div class="inline-actions"><button class="button button-primary" data-submit-task="${escapeHTML(id ?? "")}" ${id == null ? "disabled" : ""}>Kirim bukti →</button></div></article>`;
-  }).join("")}</div>`;
-}
-function renderSubmissions() {
-  const rows = [
-    ...state.submissions.map(row => ({ ...row, _kind: "Tugas" })),
-    ...state.withdrawals.map(row => ({ ...row, _kind: "Penarikan" })),
-    ...state.robux.map(row => ({ ...row, _kind: "Robux" })),
-  ].sort((a,b) => String(b.created_at||"").localeCompare(String(a.created_at||"")));
-  if (!rows.length) {
-    $("#viewContent").innerHTML = emptyState("◷", "Belum ada aktivitas", "Pengajuan tugas, penarikan, dan penukaran Robux akan tampil di sini.");
-    return;
-  }
-  $("#viewContent").innerHTML = `<div class="stack">${rows.map(row => {
-    const [statusClass, statusText] = statusLabel(row.status);
-    const title = row._kind === "Tugas"
-      ? (row.taskTitle || row.task_title || row.title || `Pengajuan tugas #${row.id ?? "—"}`)
-      : row._kind === "Penarikan"
-        ? `Penarikan ${money(row.amount)} · ${row.method || "Metode"}`
-        : `Penukaran ${escapeHTML(row.robux ?? "")} Robux`;
-    const detail = row._kind === "Tugas" ? (row.note || "Tidak ada catatan.")
-      : row._kind === "Penarikan" ? (row.destination ? `Tujuan: ${row.destination}` : "Permintaan penarikan saldo")
-      : (row.username ? `Username Roblox: ${row.username}` : "Permintaan penukaran Robux");
-    return `<article class="data-card"><div class="data-card-head"><div><span class="tag">${row._kind}</span><h4>${escapeHTML(title)}</h4><p>${escapeHTML(detail)}</p></div><span class="status ${statusClass}">${statusText}</span></div><div class="meta-row"><span class="tag">ID: ${escapeHTML(row.id ?? "—")}</span><span class="tag">${escapeHTML(row.created_at || row.date || "Tanggal tidak tersedia")}</span></div>${row.review_note ? `<p style="margin-top:10px">Catatan pemeriksa: ${escapeHTML(row.review_note)}</p>` : ""}${row._kind === "Tugas" && row.proof_url ? `<div class="inline-actions"><button class="button button-outline" data-proof-id="${escapeHTML(row.id)}">Lihat bukti</button></div>` : ""}</article>`;
-  }).join("")}</div>`;
-}
-function renderWithdraw() {
-  $("#viewContent").innerHTML = `<p style="color:#9ba4c0;font-size:11px;line-height:1.7;margin-top:18px">Ajukan penarikan menggunakan saldo yang diverifikasi server. Pastikan tujuan benar. Nilai minimum, biaya, dan aturan penarikan tetap ditentukan backend.</p>
-    <form id="withdrawForm" class="form-grid">
-      <label class="field">Metode penarikan<select name="method" required><option value="DANA">DANA</option></select><span class="field-hint">Penukaran Robux tersedia di menu Tukar Robux agar masuk ke antrean Robux admin.</span></label>
-      <label class="field">Jumlah<input name="amount" type="number" min="1" step="1" inputmode="numeric" required placeholder="Masukkan jumlah"><span class="field-hint">Jumlah akan divalidasi kembali oleh server. Jangan mengandalkan angka di browser.</span></label>
-      <label class="field">Nomor/tujuan DANA<input name="destination" required maxlength="160" placeholder="Nomor DANA"><span class="field-hint">Jangan isi password atau kode OTP akun.</span></label>
-      <div id="withdrawError" class="form-error hidden" role="alert"></div>
-      <button class="button button-primary" type="submit">Kirim pengajuan penarikan →</button>
-    </form>`;
-}
-
-function renderRobux() {
-  $("#viewContent").innerHTML = `<p style="color:#9ba4c0;font-size:11px;line-height:1.7;margin-top:18px">Pilih metode penukaran dan isi data yang diperlukan. Tarif dan potongan saldo dihitung dan divalidasi oleh server. Saldo yang ditahan akan dikembalikan jika permintaan ditolak.</p>
-    <form id="robuxForm" class="form-grid">
-      <label class="field">Metode penukaran<select name="method" id="robuxMethod" required><option value="gamepass">Game Pass</option><option value="username">Via Username</option></select></label>
-      <label class="field">Jumlah Robux<input name="robux" type="number" min="10" step="1" inputmode="numeric" required placeholder="Minimal sesuai aturan server"></label>
-      <label class="field">Username Roblox<input name="username" required maxlength="100" placeholder="Username Roblox"></label>
-      <label class="field" id="robuxGamepassField">Link Game Pass<input name="gamepassUrl" type="url" maxlength="500" placeholder="https://www.roblox.com/..."><span class="field-hint">Wajib untuk metode Game Pass; jangan bagikan password atau OTP.</span></label>
-      <div id="robuxError" class="form-error hidden" role="alert"></div>
-      <button class="button button-primary" type="submit">Ajukan penukaran →</button>
-    </form>`;
-  const method = $("#robuxMethod"), urlField = $("#robuxGamepassField"), urlInput = $("#robuxForm").elements.gamepassUrl;
-  const update = () => { const gamepass = method.value === "gamepass"; urlField.classList.toggle("hidden", !gamepass); urlInput.required = gamepass; };
-  method.addEventListener("change", update); update();
-}
-function adminReviewCard(item, type, title, detail, primaryStatus, primaryLabel) {
-  const status = String(item.status || "pending");
-  const buttons = status === "pending" ? `<div class="inline-actions"><button class="button button-primary" data-admin-review="${type}" data-record-id="${escapeHTML(item.id)}" data-review-status="${primaryStatus}">${primaryLabel}</button><button class="button button-outline" data-admin-review="${type}" data-record-id="${escapeHTML(item.id)}" data-review-status="rejected">Tolak</button></div>` : "";
-  const [statusClass, statusText] = statusLabel(status);
-  return `<article class="data-card"><div class="data-card-head"><div><h4>${escapeHTML(title)}</h4><p>${escapeHTML(detail)}</p></div><span class="status ${statusClass}">${escapeHTML(statusText)}</span></div><div class="meta-row"><span class="tag">ID: ${escapeHTML(item.id)}</span><span class="tag">${escapeHTML(item.created_at || "Tanggal tidak tersedia")}</span></div>${item.review_note ? `<p>Catatan: ${escapeHTML(item.review_note)}</p>` : ""}${buttons}</article>`;
-}
-async function renderAdmin() {
-  if (state.user?.role !== "admin") { $("#viewContent").innerHTML = emptyState("⚿", "Akses admin ditolak", "Halaman ini hanya tersedia untuk akun dengan role admin."); return; }
-  $("#viewContent").innerHTML = emptyState("◷", "Memuat panel admin", "Mengambil ringkasan, pengguna, tugas, dan antrean pengajuan.");
-  try {
-    const [overview, jobs, users, submissions, withdrawals, robux, settings] = await Promise.all([
-      api("/api/admin/overview"), api("/api/admin/jobs"), api("/api/admin/users"),
-      api("/api/admin/submissions"), api("/api/admin/withdrawals"), api("/api/admin/robux"),
-      api("/api/admin/settings")
-    ]);
-    const cfg = Object.fromEntries((Array.isArray(settings) ? settings : []).map(row => [row.key, row.value]));
-    const reviewSubmissionCards = (Array.isArray(submissions) ? submissions : []).map(item =>
-      adminReviewCard(item, "submissions", `Pengajuan tugas #${item.id}`, `User: ${item.user_id} · Tugas: ${item.job_id} · ${item.note || "Tanpa catatan"}`, "approved", "Setujui & beri reward")
-      .replace("</article>", `${item.proof_url ? `<div class="inline-actions"><button class="button button-outline" data-proof-id="${escapeHTML(item.id)}">Lihat bukti</button></div>` : ""}</article>`));
-    const withdrawalCards = (Array.isArray(withdrawals) ? withdrawals : []).map(item =>
-      adminReviewCard(item, "withdrawals", `Penarikan ${money(item.amount)}`, `User: ${item.user_id} · Metode: ${item.method} · Tujuan: ${item.destination}`, "paid", "Tandai dibayar"));
-    const robuxCards = (Array.isArray(robux) ? robux : []).map(item =>
-      adminReviewCard(item, "robux", `Permintaan ${item.robux} Robux`, `User: ${item.user_id} · Username: ${item.username} · Metode: ${item.method} · Ditahan: ${money(item.cost)}`, "completed", "Tandai selesai"));
-    const userCards = (Array.isArray(users) ? users : []).map(user => `<article class="data-card"><div class="data-card-head"><div><h4>${escapeHTML(user.username)}</h4><p>Role: ${escapeHTML(user.role)} · Saldo: ${escapeHTML(money(user.balance))} · Ditahan: ${escapeHTML(money(user.reserved_balance))}</p></div><span class="status ${user.disabled ? "rejected" : "approved"}">${user.disabled ? "Dinonaktifkan" : "Aktif"}</span></div><div class="inline-actions"><input aria-label="Nominal penyesuaian saldo" id="adjustAmount-${escapeHTML(user.id)}" type="number" step="1" placeholder="+/- saldo"><button class="button button-outline" data-user-adjust="${escapeHTML(user.id)}">Sesuaikan saldo</button><button class="button button-quiet" data-user-toggle="${escapeHTML(user.id)}" data-user-disabled="${!user.disabled}">${user.disabled ? "Aktifkan akun" : "Nonaktifkan akun"}</button></div></article>`).join("");
-    const jobCards = (Array.isArray(jobs) ? jobs : []).map(job => `<article class="data-card"><div class="data-card-head"><div><h4>${escapeHTML(job.title)}</h4><p>${escapeHTML(job.description || "Tanpa deskripsi")}</p></div><span class="status ${job.status === "active" ? "approved" : "pending"}">${escapeHTML(job.status)}</span></div><div class="meta-row"><span class="tag">Reward: ${escapeHTML(money(job.reward))}</span><span class="tag">ID: ${escapeHTML(job.id)}</span></div></article>`).join("");
-    $("#viewContent").innerHTML = `
-      <div class="summary-grid">
-        <div class="summary-box"><span>Pengguna</span><b>${Number(overview.users || 0)}</b><small>Total akun</small></div>
-        <div class="summary-box"><span>Tugas</span><b>${Number(overview.jobs || 0)}</b><small>Total tugas</small></div>
-        <div class="summary-box"><span>Antrean</span><b>${Number(overview.pending_submissions || 0) + Number(overview.pending_withdrawals || 0) + Number(overview.pending_robux || 0)}</b><small>Semua jenis pengajuan</small></div>
-      </div>
-      <h4>Tambah tugas</h4>
-      <form id="adminJobForm" class="form-grid">
-        <label class="field">Judul tugas<input name="title" maxlength="160" required></label>
-        <label class="field">Deskripsi<textarea name="description" maxlength="4000" rows="3"></textarea></label>
-        <label class="field">Reward (Rp)<input name="reward" type="number" min="0" step="1" required></label>
-        <label class="field"><span><input name="photo_required" type="checkbox" style="width:auto;margin-right:8px">Wajib foto bukti</span></label>
-        <div id="adminJobError" class="form-error hidden" role="alert"></div>
-        <button class="button button-primary" type="submit">Buat tugas</button>
-      </form>
-      <h4>Tugas aktif & tersimpan</h4><div class="stack">${jobCards || emptyState("✧","Belum ada tugas","Buat tugas pertama melalui form di atas.")}</div>
-      <h4>Pengajuan tugas</h4><div class="stack">${reviewSubmissionCards.join("") || emptyState("◷","Tidak ada pengajuan","Belum ada pengajuan tugas.")}</div>
-      <h4>Penarikan saldo</h4><div class="stack">${withdrawalCards.join("") || emptyState("⇧","Tidak ada penarikan","Belum ada permintaan penarikan.")}</div>
-      <h4>Penukaran Robux</h4><div class="stack">${robuxCards.join("") || emptyState("◇","Tidak ada permintaan Robux","Belum ada permintaan penukaran.")}</div>
-      <h4>Pengguna & saldo</h4><div class="stack">${userCards || emptyState("♙","Belum ada pengguna","Akun baru akan tampil di sini.")}</div>
-      <h4>Pengaturan Robux</h4>
-      <form id="adminSettingsForm" class="form-grid">
-        <label class="field">Minimal Robux<input name="robuxMin" type="number" min="1" step="1" value="${escapeHTML(cfg.robuxMin ?? 10)}" required></label>
-        <label class="field">Tarif Game Pass per Robux (Rp)<input name="gamepassRate" type="number" min="1" step="1" value="${escapeHTML(cfg.gamepassRate ?? 170)}" required></label>
-        <label class="field">Tarif Username per Robux (Rp)<input name="usernameRate" type="number" min="1" step="1" value="${escapeHTML(cfg.usernameRate ?? 230)}" required></label>
-        <label class="field"><span><input name="maintenanceEnabled" type="checkbox" style="width:auto;margin-right:8px" ${String(cfg.maintenanceEnabled ?? false) === "true" ? "checked" : ""}>Aktifkan maintenance</span></label>
-        <label class="field">Alasan maintenance<input name="maintenanceReason" maxlength="300" value="${escapeHTML(cfg.maintenanceReason ?? "Sistem sedang dalam pemeliharaan.")}"></label>
-        <label class="field">Dibuka kembali (opsional)<input name="maintenanceReopenAt" type="datetime-local" value="${escapeHTML(localDateTimeInput(cfg.maintenanceReopenAt ?? ""))}"><span class="field-hint">Waktu memakai zona waktu perangkat.</span></label>
-        <div id="adminSettingsError" class="form-error hidden" role="alert"></div>
-        <button class="button button-primary" type="submit">Simpan pengaturan</button>
-      </form>`;
-  } catch (error) {
-    setNotice("Panel admin gagal dimuat: " + getMessage(error), "error");
-    $("#viewContent").innerHTML = emptyState("!", "Gagal memuat admin", "Segarkan halaman setelah memeriksa konfigurasi database dan role admin.");
-  }
-}
-async function submitRobux(event) {
-  event.preventDefault();
-  if (!requireLogin()) return;
-  const form=event.currentTarget, err=$("#robuxError"), button=form.querySelector('button[type="submit"]');
-  const payload={method:form.elements.method.value,robux:Number(form.elements.robux.value),username:form.elements.username.value.trim(),gamepassUrl:form.elements.gamepassUrl.value.trim()};
-  err.classList.add("hidden"); button.disabled=true; button.textContent="Mengirim…";
-  try {
-    const result=await api("/api/robux",{method:"POST",body:JSON.stringify(payload)});
-    showSuccessModal("Penarikan diterima, admin akan segera memprosesnya.");
-    await loadDashboard(); renderView("submissions");
-  } catch(error) { err.textContent=getMessage(error); err.classList.remove("hidden"); }
-  finally { button.disabled=false; button.textContent="Ajukan penukaran →"; }
-}
-async function submitAdminJob(event) {
-  event.preventDefault(); if(state.user?.role!=="admin") return;
-  const form=event.currentTarget, err=$("#adminJobError"), button=form.querySelector('button[type="submit"]');
-  err.classList.add("hidden"); button.disabled=true;
-  try {
-    await api("/api/admin/jobs",{method:"POST",body:JSON.stringify({title:form.elements.title.value.trim(),description:form.elements.description.value.trim(),reward:Number(form.elements.reward.value),photo_required:form.elements.photo_required.checked})});
-    notify("Tugas berhasil dibuat."); await renderAdmin();
-  } catch(error) { err.textContent=getMessage(error); err.classList.remove("hidden"); }
-  finally { button.disabled=false; }
-}
-async function saveAdminSettings(event) {
-  event.preventDefault(); if(state.user?.role!=="admin") return;
-  const form=event.currentTarget, err=$("#adminSettingsError"), button=form.querySelector('button[type="submit"]');
-  const values={robuxMin:Number(form.elements.robuxMin.value),gamepassRate:Number(form.elements.gamepassRate.value),usernameRate:Number(form.elements.usernameRate.value),maintenanceEnabled:form.elements.maintenanceEnabled.checked,maintenanceReason:form.elements.maintenanceReason.value.trim(),maintenanceReopenAt:form.elements.maintenanceReopenAt.value ? new Date(form.elements.maintenanceReopenAt.value).toISOString() : ""};
-  const numericValues=[values.robuxMin,values.gamepassRate,values.usernameRate];
-  if(numericValues.some(value=>!Number.isSafeInteger(value)||value<1)){err.textContent="Minimal Robux dan semua tarif harus bilangan bulat positif.";err.classList.remove("hidden");return;}
-  if(values.maintenanceReopenAt && !Number.isFinite(new Date(values.maintenanceReopenAt).getTime())){err.textContent="Waktu buka kembali tidak valid.";err.classList.remove("hidden");return;}
-  err.classList.add("hidden");button.disabled=true;
-  try { await api("/api/admin/settings",{method:"POST",body:JSON.stringify(values)}); await checkMaintenance(true); notify("Pengaturan berhasil disimpan."); await renderAdmin(); }
-  catch(error){err.textContent=getMessage(error);err.classList.remove("hidden");}
-  finally{button.disabled=false;}
-}
-async function adminReview(type, id, status) {
-  const note = window.prompt("Catatan pemeriksa (opsional):", "") || "";
-  try { await api(`/api/admin/${encodeURIComponent(type)}/${encodeURIComponent(id)}/review`,{method:"POST",body:JSON.stringify({status,note})}); notify("Status pengajuan diperbarui."); await renderAdmin(); }
-  catch(error){notify("Gagal memproses pengajuan: "+getMessage(error));}
-}
-async function adminToggle(id, disabled) {
-  try { await api(`/api/admin/users/${encodeURIComponent(id)}/toggle`,{method:"POST",body:JSON.stringify({disabled})}); notify(disabled?"Akun dinonaktifkan.":"Akun diaktifkan."); await renderAdmin(); }
-  catch(error){notify("Gagal mengubah akun: "+getMessage(error));}
-}
-async function adminAdjust(id) {
-  const input=document.getElementById("adjustAmount-"+id), amount=Number(input?.value);
-  if(!Number.isFinite(amount)||amount===0){notify("Isi nominal penyesuaian saldo selain nol.");return;}
-  const reason=window.prompt("Alasan penyesuaian saldo:","Penyesuaian admin")||"Penyesuaian admin";
-  try { await api(`/api/admin/users/${encodeURIComponent(id)}/adjust`,{method:"POST",body:JSON.stringify({amount,reason})}); notify("Saldo berhasil disesuaikan."); await renderAdmin(); }
-  catch(error){notify("Gagal menyesuaikan saldo: "+getMessage(error));}
-}
-async function openProof(id) {
-  try { const result=await api(`/api/submissions/${encodeURIComponent(id)}/proof`); if(!result.url) throw new Error("Tautan bukti tidak tersedia."); window.open(result.url,"_blank","noopener,noreferrer"); }
-  catch(error){notify("Gagal membuka bukti: "+getMessage(error));}
-}
-
-function renderView(view) {
-  state.view = view in labels ? view : "overview";
-  if (state.view === "admin" && state.user?.role !== "admin") {
-    state.view = "overview";
-    setNotice("Menu admin hanya tersedia untuk akun admin.", "error");
-    view = "overview";
-  }
-  document.querySelectorAll(".nav-item").forEach(button => button.classList.toggle("active", button.dataset.view === state.view));
-  $("#viewKicker").textContent = labels[state.view][0];
-  $("#viewTitle").textContent = labels[state.view][1];
-  if (view !== "admin") setNotice("");
-  if (state.view !== "overview" && !requireLogin()) return;
-  if (state.view === "overview") state.user ? renderOverview() : $("#viewContent").innerHTML = `<div class="welcome-panel"><div class="welcome-art">✦</div><div><h4>Selamat datang di FunEarnEzz</h4><p>Masuk atau buat akun untuk memuat saldo, tugas, dan riwayatmu dari backend.</p><div class="inline-actions"><button class="button button-primary" id="contentLogin">Masuk</button><button class="button button-outline" id="contentRegister">Buat akun</button></div></div></div><div class="summary-grid"><div class="summary-box"><span>Saldo tersedia</span><b>—</b><small>Memerlukan login</small></div><div class="summary-box"><span>Pengajuan tugas</span><b>—</b><small>Memerlukan login</small></div><div class="summary-box"><span>Status API</span><b id="apiSummary">${"Memeriksa…"}</b><small id="apiSummaryHint">${"Memakai Cloudflare Worker pada origin yang sama"}</small></div></div>`;
-  else if (state.view === "tasks") renderTasks();
-  else if (state.view === "submissions") renderSubmissions();
-  else if (state.view === "withdraw") renderWithdraw();
-  else if (state.view === "robux") renderRobux();
-  else if (state.view === "admin") renderAdmin();
-}
-function openAuth(mode) {
-  state.authMode = mode === "register" ? "register" : "login";
-  const registering = state.authMode === "register";
-  $("#authEyebrow").textContent = registering ? "JOIN FUNEARNEZZ" : "WELCOME BACK";
-  $("#authTitle").textContent = registering ? "Buat akun baru" : "Masuk akun";
-  $("#authSubtitle").textContent = registering ? "Daftar untuk mulai menggunakan dashboard reward." : "Lanjutkan aktivitas reward kamu.";
-  $("#nameField").classList.add("hidden");
-  $("#authName").required = false;
-  $("#authIdentity").placeholder = "Masukkan username";
-  $("#confirmPasswordField").classList.toggle("hidden", !registering);
-  $("#authConfirmPassword").required = registering;
-  $("#authIdentity").value = ""; $("#authPassword").value = ""; $("#authConfirmPassword").value = "";
-  $("#authPassword").autocomplete = registering ? "new-password" : "current-password";
-  $("#authSubmit").innerHTML = registering ? "Buat akun <span>→</span>" : "Masuk <span>→</span>";
-  $("#authSwitchText").innerHTML = registering ? 'Sudah punya akun? <button type="button" id="switchAuth">Masuk</button>' : 'Belum punya akun? <button type="button" id="switchAuth">Daftar gratis</button>';
-  $("#authError").classList.add("hidden");
-  if (!$("#authDialog").open) $("#authDialog").showModal();
-}
-function closeAuth() { if ($("#authDialog").open) $("#authDialog").close(); }
-async function checkHealth() {
-  try {
-    const health = await api("/api/health");
-    if (health.databaseConfigured) setConnection("online", "Backend siap");
-    else setConnection("ready", "Frontend siap · Supabase nanti");
-  } catch (error) {
-    // Desain frontend tetap bisa diuji meski backend belum disiapkan.
-    setConnection("ready", "Frontend siap · backend nanti");
-    console.info("Backend belum dikonfigurasi:", getMessage(error));
-  }
-}
-async function parseList(data, keys) {
-  if (Array.isArray(data)) return data;
-  for (const key of keys) if (Array.isArray(data?.[key])) return data[key];
-  return [];
-}
-async function loadDashboard() {
-  if (!state.user) { renderProfile(); renderView("overview"); return; }
-  setNotice("Memuat data akun dari server…", "info");
-  try {
-    const [me, tasks, submissions, wallet] = await Promise.all([
-      api("/api/me"),
-      api("/api/jobs"),
-      api("/api/history"),
-      api("/api/wallet")
-    ]);
-    state.user = me.user || me;
-    state.tasks = await parseList(tasks, ["tasks","data","items"]);
-    state.submissions = await parseList(submissions, ["submissions","data","items"]);
-    state.withdrawals = await parseList(submissions, ["withdrawals"]);
-    state.robux = await parseList(submissions, ["robux"]);
-    state.wallet = wallet.wallet || wallet.data || wallet;
-    renderProfile(); renderView(state.view); setNotice("Data akun berhasil dimuat dari backend.", "success");
-  } catch (error) {
-    const message = getMessage(error);
-    if (/401|403|unauthor|token|login|auth/i.test(message)) {
-      saveToken(null); state.user = null; renderProfile(); renderView("overview");
-      setNotice("Sesi tidak valid atau sudah berakhir. Silakan masuk kembali.", "error");
-    } else setNotice(`Gagal memuat data: ${message}`, "error");
-  }
-}
-async function onAuthSubmit(event) {
-  event.preventDefault();
-  if (state.busy) return;
-  const registering = state.authMode === "register";
-  const identity = $("#authIdentity").value.trim();
-  const password = $("#authPassword").value;
-  const username = identity;
-  const errorBox = $("#authError");
-  errorBox.classList.add("hidden");
-  if (registering && password !== $("#authConfirmPassword").value) { errorBox.textContent = "Konfirmasi password tidak cocok."; errorBox.classList.remove("hidden"); return; }
-  if (!/^[A-Za-z0-9_]{3,24}$/.test(identity)) { errorBox.textContent = "Username harus 3–24 karakter (huruf, angka, underscore)."; errorBox.classList.remove("hidden"); return; }
-  
-  state.busy = true; const submit = $("#authSubmit"); submit.disabled = true; submit.textContent = "Memproses…";
-  try {
-    const payload = { username, password };
-    const result = await api(registering ? "/api/auth/register" : "/api/auth/login", { method:"POST", body:JSON.stringify(payload) });
-    // Cookie sesi dikelola server sebagai HttpOnly dan tidak disimpan di JavaScript.
-    saveToken(null);
-    if (!result.user) throw new Error("Respons autentikasi tidak menyertakan data akun.");
-    state.user = result.user;
-    document.body.classList.add("authenticated");
-    closeAuth(); $("#authForm").reset(); notify(registering ? "Pendaftaran berhasil." : "Login berhasil.");
-    await loadDashboard();
-    $("#workspace").scrollIntoView({ behavior:"smooth", block:"start" });
-  } catch (error) {
-    errorBox.textContent = getMessage(error); errorBox.classList.remove("hidden");
-  } finally {
-    state.busy = false; submit.disabled = false; submit.innerHTML = state.authMode === "register" ? "Buat akun <span>→</span>" : "Masuk <span>→</span>";
-  }
-}
-async function submitProof(taskId) {
-  if (!requireLogin()) return;
-  const task = state.tasks.find(item => String(item.id ?? item.taskId ?? item.task_id) === String(taskId));
-  if (!task) { notify("Tugas tidak ditemukan. Segarkan daftar tugas."); return; }
-  const existing = $("#proofDialog");
-  if (existing) existing.remove();
-  const dialog = document.createElement("dialog"); dialog.id = "proofDialog"; dialog.className = "modal";
-  dialog.innerHTML = `<form id="proofForm" class="modal-card"><button type="button" class="modal-close" id="closeProof" aria-label="Tutup">×</button><div class="modal-logo">F<span>+</span></div><div class="eyebrow">TASK SUBMISSION</div><h2>Kirim bukti tugas</h2><p>${escapeHTML(task.title || task.name || "Tugas")}</p><label class="field">Gambar bukti<input name="proof" type="file" accept="image/jpeg,image/png,image/webp" ${task.photo_required ? "required" : ""}><span class="field-hint">${task.photo_required ? "Foto wajib untuk tugas ini." : "Foto opsional untuk tugas ini."} Maksimum 5 MB.</span></label><label class="field">Catatan (opsional)<textarea name="note" maxlength="1000" placeholder="Tambahkan penjelasan singkat"></textarea></label><div id="proofError" class="form-error hidden" role="alert"></div><button class="button button-primary button-large full-width" type="submit">Kirim untuk diperiksa →</button></form>`;
-  document.body.appendChild(dialog); dialog.showModal();
-  $("#closeProof").onclick = () => dialog.close();
-  $("#proofForm").onsubmit = async event => {
-    event.preventDefault();
-    const form = event.currentTarget, file = form.elements.proof.files[0], err = $("#proofError"), button = form.querySelector('button[type="submit"]');
-    err.classList.add("hidden");
-    if (task.photo_required && !file) { err.textContent = "Tugas ini mewajibkan foto bukti."; err.classList.remove("hidden"); return; }
-    if (file && !["image/jpeg","image/png","image/webp"].includes(String(file.type || "").toLowerCase())) {
-      err.textContent = "Format foto harus JPG, PNG, atau WEBP.";
-      err.classList.remove("hidden"); return;
-    }
-    if (file && file.size > 5 * 1024 * 1024) { err.textContent = "Ukuran foto maksimal 5 MB."; err.classList.remove("hidden"); return; }
-    const body = new FormData(); body.append("taskId", String(taskId)); body.append("note", form.elements.note.value.trim());
-    if (file) body.append("proof", file);
-    button.disabled = true; button.textContent = "Mengirim…";
+    state.view = view;
+    clearInterval(state.chatTimer);
+    state.chatTimer = null;
+    closeMenu();
+    $$('.nav-link[data-view]').forEach(function (node) { node.classList.toggle('active', node.dataset.view === view); });
+    $('#pageEyebrow').textContent = viewMeta[view][0];
+    $('#pageTitle').textContent = viewMeta[view][1];
+    $('#pageDescription').textContent = viewMeta[view][2];
+    $('#viewRoot').innerHTML = '<div class="panel"><div class="empty-state">Memuat data…</div></div>';
     try {
-      await api(`/api/jobs/${encodeURIComponent(taskId)}/submit`, { method:"POST", body });
-      dialog.close(); notify("Bukti berhasil dikirim untuk diperiksa."); await loadDashboard(); renderView("submissions");
-    } catch (error) { err.textContent = getMessage(error); err.classList.remove("hidden"); }
-    finally { button.disabled = false; button.textContent = "Kirim untuk diperiksa →"; }
+      if (view === 'dashboard') await renderDashboard();
+      else if (view === 'history') await renderHistory();
+      else if (view === 'withdraw') await renderWithdraw();
+      else if (view === 'chat') await renderChat();
+      else if (view === 'maintenance') await renderMaintenance();
+      else if (view === 'requests') await renderRequests();
+      else if (view === 'codes') await renderCodes();
+      else if (view === 'create-job') renderCreateJob();
+      else if (view === 'review-jobs') await renderJobReviews();
+      else if (view === 'payout-settings') renderPayoutSettings();
+    } catch (error) {
+      $('#viewRoot').innerHTML = '<div class="panel"><div class="empty-state"><b>Data belum dapat dimuat</b>' + esc(error.message) + '</div><button id="retryLoad" class="button button-outline" type="button">Coba lagi</button></div>';
+      $('#retryLoad').addEventListener('click', function () { navigate(view); });
+    }
   };
-}
-async function submitWithdrawal(event) {
-  event.preventDefault();
-  if (!requireLogin()) return;
-  const form = event.currentTarget, err = $("#withdrawError"), button = form.querySelector('button[type="submit"]');
-  err.classList.add("hidden");
-  const amount = Number(form.elements.amount.value), destination = form.elements.destination.value.trim(), method = form.elements.method.value;
-  if (!Number.isFinite(amount) || amount <= 0 || !destination) { err.textContent = "Masukkan jumlah dan tujuan yang valid."; err.classList.remove("hidden"); return; }
-  button.disabled = true; button.textContent = "Mengirim…";
-  try {
-    await api("/api/withdrawals", { method:"POST", body:JSON.stringify({ method, amount, destination }) });
-    showSuccessModal("Penarikan diterima, admin akan segera memprosesnya.");
-    await loadDashboard(); renderView("submissions");
-  } catch (error) { err.textContent = getMessage(error); err.classList.remove("hidden"); }
-  finally { button.disabled = false; button.textContent = "Kirim pengajuan penarikan →"; }
-}
-async function logout() {
-  try { if (state.user) await api("/api/auth/logout", { method:"POST" }); }
-  catch (error) { console.warn("Logout server:", getMessage(error)); }
-  saveToken(null); state.user = null; document.body.classList.remove("authenticated"); state.tasks = []; state.wallet = null; state.submissions = []; state.withdrawals = []; state.robux = [];
-  renderProfile(); renderView("overview"); notify("Sesi lokal sudah diakhiri.");
-}
-async function restoreSession() {
-  try {
-    const result = await api("/api/me");
-    state.user = result.user || null;
-    if (state.user) { document.body.classList.add("authenticated"); await loadDashboard(); $("#workspace").scrollIntoView({ behavior:"auto", block:"start" }); }
-    else { document.body.classList.remove("authenticated"); renderProfile(); renderView("overview"); }
-  } catch {
-    saveToken(null);
-    state.user = null;
-    document.body.classList.remove("authenticated");
-    renderProfile();
-    renderView("overview");
-  }
-}
-document.addEventListener("click", event => {
-  const target = event.target.closest("button");
-  if (!target) return;
-  if (target.id === "openLogin" || target.id === "heroLogin" || target.id === "contentLogin") openAuth("login");
-  if (target.id === "openRegister" || target.id === "heroRegister" || target.id === "contentRegister") openAuth("register");
-  if (target.id === "closeAuth") closeAuth();
-  if (target.id === "switchAuth") openAuth(state.authMode === "login" ? "register" : "login");
-  if (target.dataset.view) { renderView(target.dataset.view); $("#workspace").scrollIntoView({ behavior:"smooth", block:"start" }); }
-  if (target.dataset.goto) { renderView(target.dataset.goto); $("#workspace").scrollIntoView({ behavior:"smooth", block:"start" }); }
-  if (target.dataset.submitTask) submitProof(target.dataset.submitTask);
-  if (target.id === "refreshButton") { checkHealth(); if (state.user) loadDashboard(); if (state.view === "admin" && state.user?.role === "admin") renderAdmin(); else if (!state.user) notify("Health check dimulai."); }
-  if (target.id === "logoutButton") logout();
-  if (target.dataset.proofId) openProof(target.dataset.proofId);
-  if (target.dataset.adminReview) adminReview(target.dataset.adminReview, target.dataset.recordId, target.dataset.reviewStatus);
-  if (target.dataset.userToggle) adminToggle(target.dataset.userToggle, target.dataset.userDisabled === "true");
-  if (target.dataset.userAdjust) adminAdjust(target.dataset.userAdjust);
-});
-$("#authForm").addEventListener("submit", onAuthSubmit);
-$("#authDialog").addEventListener("click", event => { if (event.target === $("#authDialog")) closeAuth(); });
-document.addEventListener("submit", event => {
-  if (event.target.id === "withdrawForm") submitWithdrawal(event);
-  else if (event.target.id === "robuxForm") submitRobux(event);
-  else if (event.target.id === "adminJobForm") submitAdminJob(event);
-  else if (event.target.id === "adminSettingsForm") saveAdminSettings(event);
-});
-$("#year").textContent = new Date().getFullYear();
-renderProfile(); renderView("overview"); checkHealth(); checkMaintenance(); restoreSession();
-setInterval(() => checkMaintenance(), 60000);
+  var refreshUser = async function () {
+    try {
+      var result = await api('/api/me');
+      state.user = result.user;
+      $('#headerUsername').textContent = state.user.username || 'Pengguna';
+      $('#headerAvatar').textContent = String(state.user.username || 'U').slice(0, 1).toUpperCase();
+      $('#headerBalance').textContent = cash(state.user.balance);
+    } catch (e) { setLoggedOut(); throw e; }
+  };
+  var loadRequestsMine = async function () {
+    var results = await Promise.all([api('/api/withdrawals').catch(function () { return []; }), api('/api/robux').catch(function () { return []; })]);
+    return { withdrawals: Array.isArray(results[0]) ? results[0] : [], robux: Array.isArray(results[1]) ? results[1] : [] };
+  };
+  var statusFor = function (status) {
+    status = String(status || 'pending').toLowerCase();
+    if (['paid', 'completed', 'approved', 'success'].indexOf(status) >= 0) return ['SUKSES', 'success', '✓'];
+    if (status === 'rejected' || status === 'declined' || status === 'failed') return ['DITOLAK', 'rejected', '×'];
+    return ['DIPROSES', 'pending', '◷'];
+  };
+  var statusTag = function (status) {
+    var info = statusFor(status);
+    return '<span class="status ' + info[1] + '">' + info[2] + ' ' + info[0] + '</span>';
+  };
+  var renderDashboard = async function () {
+    var result = await api('/api/dashboard');
+    state.user = result.user || state.user;
+    var jobs = await api('/api/jobs');
+    var wallet = await api('/api/wallet');
+    $('#headerBalance').textContent = cash(wallet.balance == null ? state.user.balance : wallet.balance);
+    var jobHtml = (Array.isArray(jobs) ? jobs : []).map(function (job) {
+      return '<article class="job-card"><div class="card-top"><div><h3>' + esc(job.title) + '</h3><p>' + esc(job.description || 'Ikuti instruksi job yang tersedia.') + '</p></div><span class="tag reward">+' + cash(job.reward) + '</span></div><div class="tag-list"><span class="tag">Kuota ' + esc(job.quota_used || 0) + '/' + esc(job.quota == null ? '∞' : job.quota) + '</span><span class="tag">' + (job.photo_required ? 'Foto bukti wajib' : 'Foto bukti opsional') + '</span></div>' +
+        (job.link ? '<p><a href="' + esc(job.link) + '" rel="noopener noreferrer" target="_blank" class="text-button">Buka link tugas ↗</a></p>' : '') +
+        '<div class="button-row"><button class="button button-primary" type="button" data-job-submit="' + esc(job.id) + '" data-job-title="' + esc(job.title) + '" data-photo="' + String(!!job.photo_required) + '">Kerjakan job</button></div></article>';
+    }).join('');
+    $('#viewRoot').innerHTML =
+      '<section class="balance-card"><small>Saldo tersedia</small><strong>' + cash(wallet.balance == null ? state.user.balance : wallet.balance) + '</strong><p>Saldo tertahan untuk request: ' + cash(wallet.reserved_balance || 0) + '</p></section>' +
+      '<div class="mini-stats"><div class="mini-stat"><small>Tugas tersedia</small><strong>' + (Array.isArray(jobs) ? jobs.length : 0) + '</strong></div><div class="mini-stat"><small>Pengajuan tugas</small><strong>' + esc(result.stats && result.stats.submissions || 0) + '</strong></div><div class="mini-stat"><small>Request withdraw</small><strong>' + esc(result.stats && result.stats.withdrawals || 0) + '</strong></div></div>' +
+      '<section class="panel"><div class="panel-heading"><div><h2>Job tersedia</h2><p class="subtle">Pilih tugas dan ikuti instruksinya.</p></div></div><div class="stack">' + (jobHtml || '<div class="empty-state"><b>Belum ada job tersedia</b>Cek lagi nanti saat admin menerbitkan tugas baru.</div>') + '</div></section>' +
+      '<section class="panel"><div class="panel-heading"><div><h2>Unick Code</h2><p class="subtle">Masukkan kode reward yang diberikan admin. Setiap akun hanya bisa menukarkan kode yang sama satu kali.</p></div></div><form id="redeemForm" class="form-grid"><label class="field wide"><span>UNICK CODE</span><input name="code" maxlength="80" placeholder="Masukkan kode unik" autocomplete="off" required></label><div class="wide"><button class="button button-primary" type="submit">Terima reward</button></div></form></section>';
+    $$('[data-job-submit]').forEach(function (button) { button.addEventListener('click', function () { openJobSubmit(button.dataset.jobSubmit, button.dataset.jobTitle, button.dataset.photo === 'true'); }); });
+    $('#redeemForm').addEventListener('submit', async function (event) {
+      event.preventDefault();
+      var form = event.currentTarget;
+      var button = $('button[type="submit"]', form); button.disabled = true;
+      try {
+        var data = await api('/api/codes/redeem', { method: 'POST', body: JSON.stringify({ code: form.code.value.trim() }) });
+        await refreshUser();
+        showDialog('Reward berhasil diterima', 'Kode valid. Saldo bertambah ' + cash(data.reward) + '.', { autoMs: 3000, icon: '✓' });
+        navigate('dashboard');
+      } catch (error) { showDialog('Kode belum dapat digunakan', error.message, { kind: 'error' }); }
+      finally { button.disabled = false; }
+    });
+  };
+  var openJobSubmit = function (id, title, requiredPhoto) {
+    closeDialog();
+    var layer = $('#dialogLayer');
+    layer.innerHTML = '<section class="dialog-card" role="dialog" aria-modal="true"><div class="dialog-icon">✓</div><h2>Kirim hasil job</h2><p>' + esc(title) + '</p><div class="dialog-fields"><form id="jobSubmitForm" class="form-stack"><label class="field"><span>Catatan / hasil</span><textarea name="note" maxlength="2000" placeholder="Ceritakan hasil pekerjaan kamu"></textarea></label><label class="field"><span>Foto bukti ' + (requiredPhoto ? '(wajib)' : '(opsional)') + '</span><input name="proof" type="file" accept="image/jpeg,image/png,image/webp" ' + (requiredPhoto ? 'required' : '') + '><small>JPG, PNG, WEBP. Maksimal 5 MB.</small></label><button class="button button-primary" type="submit">Kirim pengajuan</button><button id="jobCancel" class="button button-outline" type="button">Batal</button></form></div></section>';
+    layer.classList.remove('hidden');
+    $('#jobCancel').addEventListener('click', closeDialog);
+    $('#jobSubmitForm').addEventListener('submit', async function (event) {
+      event.preventDefault();
+      var form = event.currentTarget;
+      var button = $('button[type="submit"]', form);
+      var file = form.proof.files[0];
+      if (requiredPhoto && !file) { showDialog('Foto wajib diisi', 'Job ini mengharuskan foto bukti.', { kind: 'warning' }); return; }
+      if (file && file.size > 5 * 1024 * 1024) { showDialog('Foto terlalu besar', 'Ukuran foto maksimal 5 MB.', { kind: 'error' }); return; }
+      var payload = new FormData(); payload.append('note', form.note.value);
+      if (file) payload.append('proof', file);
+      button.disabled = true; button.textContent = 'Mengirim…';
+      try {
+        await api('/api/jobs/' + encodeURIComponent(id) + '/submit', { method: 'POST', body: payload });
+        closeDialog();
+        showDialog('Pengajuan dikirim', 'Hasil job masuk antrean pemeriksaan admin.', { autoMs: 3000 });
+        await navigate('dashboard');
+      } catch (error) { button.disabled = false; button.textContent = 'Kirim pengajuan'; showDialog('Pengajuan gagal', error.message, { kind: 'error' }); }
+    });
+  };
+  var renderHistory = async function () {
+    var results = await Promise.all([api('/api/wallet'), api('/api/history')]);
+    var wallet = results[0], history = results[1];
+    var ledger = (wallet.transactions || []).map(function (item) {
+      var value = Number(item.amount || 0);
+      var sign = value > 0 ? '+' : '';
+      return '<article class="history-row"><div class="card-top"><div><strong>' + esc(item.reason || item.type || 'Transaksi saldo') + '</strong><p class="subtle">' + esc(date(item.created_at)) + '</p></div><b style="color:' + (value >= 0 ? '#087f4c' : '#bd3646') + '">' + sign + cash(value) + '</b></div></article>';
+    }).join('');
+    var requests = [];
+    (history.withdrawals || []).forEach(function (item) { requests.push({ type: 'DANA', created_at: item.created_at, amount: item.amount, payout: item.payout_amount, fee: item.fee_amount, method: item.method, status: item.status, note: item.review_note, id: item.id }); });
+    (history.robux || []).forEach(function (item) { requests.push({ type: 'ROBUX', created_at: item.created_at, amount: item.cost, details: item.robux + ' Robux · ' + item.method + ' · ' + item.username, status: item.status, note: item.review_note, id: item.id }); });
+    requests.sort(function (a, b) { return new Date(b.created_at) - new Date(a.created_at); });
+    var requestHtml = requests.map(function (item) {
+      var status = statusFor(item.status);
+      return '<article class="history-row"><div class="card-top"><div><strong>' + esc(item.type) + ' · ' + cash(item.amount) + '</strong><p class="subtle">' + esc(date(item.created_at)) + '</p></div>' + statusTag(item.status) + '</div>' +
+        (item.details ? '<p class="subtle">' + esc(item.details) + '</p>' : '') +
+        (item.type === 'DANA' ? '<p class="subtle">Diterima: ' + cash(item.payout == null ? item.amount : item.payout) + ' · Biaya admin: ' + cash(item.fee || 0) + '</p>' : '') +
+        (item.note ? '<div class="inline-alert danger-alert">Alasan admin: ' + esc(item.note) + '</div>' : '') + '</article>';
+    }).join('');
+    var submissions = (history.submissions || []).map(function (item) {
+      return '<article class="history-row"><div class="card-top"><div><strong>Job #' + esc(item.job_id) + '</strong><p class="subtle">' + esc(date(item.created_at)) + '</p></div>' + statusTag(item.status) + '</div>' + (item.review_note ? '<p class="subtle">Catatan admin: ' + esc(item.review_note) + '</p>' : '') + '</article>';
+    }).join('');
+    $('#viewRoot').innerHTML =
+      '<section class="panel"><div class="panel-heading"><div><h2>Mutasi saldo</h2><p>Uang masuk dan keluar dari akun kamu.</p></div></div><div class="stack">' + (ledger || '<div class="empty-state">Belum ada transaksi saldo.</div>') + '</div></section>' +
+      '<section class="panel"><div class="panel-heading"><div><h2>Riwayat withdraw</h2><p>DANA dan Robux dalam satu daftar.</p></div></div><div class="stack">' + (requestHtml || '<div class="empty-state">Belum ada request withdraw.</div>') + '</div></section>' +
+      '<section class="panel"><div class="panel-heading"><div><h2>Riwayat job</h2><p>Status dari pengajuan job yang pernah dikirim.</p></div></div><div class="stack">' + (submissions || '<div class="empty-state">Belum ada pengajuan job.</div>') + '</div></section>';
+  };
+  var renderWithdraw = async function () {
+    var results = await Promise.all([api('/api/wallet'), api('/api/config'), loadRequestsMine()]);
+    var wallet = results[0], config = results[1].settings || {}, requests = results[2];
+    state.config = Object.assign({}, state.config, config);
+    var rows = [];
+    requests.withdrawals.forEach(function (item) { rows.push({ kind: 'DANA', amount: item.amount, payout: item.payout_amount, fee: item.fee_amount, status: item.status, at: item.created_at, note: item.review_note, details: item.destination }); });
+    requests.robux.forEach(function (item) { rows.push({ kind: 'ROBUX', amount: item.cost, status: item.status, at: item.created_at, note: item.review_note, details: item.robux + ' Robux · ' + item.method + ' · ' + item.username }); });
+    rows.sort(function (a, b) { return new Date(b.at) - new Date(a.at); });
+    var requestHtml = rows.map(function (item) {
+      return '<article class="history-row"><div class="card-top"><div><strong>' + esc(item.kind) + ' · potong ' + cash(item.amount) + '</strong><p class="subtle">' + esc(date(item.at)) + '</p></div>' + statusTag(item.status) + '</div><p class="subtle">' + esc(item.details || '') + '</p>' +
+      (item.kind === 'DANA' ? '<p class="subtle">Nominal yang diterima: ' + cash(item.payout == null ? item.amount : item.payout) + ' · Biaya admin: ' + cash(item.fee || 0) + '</p>' : '') +
+      (item.note ? '<div class="inline-alert danger-alert">Alasan ditolak: ' + esc(item.note) + '</div>' : '') + '</article>';
+    }).join('');
+    var fee = numberSetting(config.danaFee, 2000);
+    $('#viewRoot').innerHTML =
+      '<section class="panel"><div class="panel-heading"><div><h2>Buat request</h2><p>Request akan masuk antrean admin. Saldo ditahan sampai request diproses.</p></div></div>' +
+      '<form id="withdrawForm" class="form-grid">' +
+      '<label class="field"><span>Jenis penarikan</span><select id="withdrawType" name="type"><option value="dana">DANA</option><option value="robux">Robux</option></select></label>' +
+      '<label class="field"><span>Nominal saldo yang dipotong (Rp)</span><input id="withdrawAmount" type="number" name="amount" min="1" step="1" required placeholder="Contoh: 10000"></label>' +
+      '<label class="field wide" id="danaDestinationWrap"><span>Nomor DANA</span><input name="destination" inputmode="tel" maxlength="200" placeholder="Nomor akun DANA penerima"></label>' +
+      '<label class="field" id="robuxMethodWrap" hidden><span>Metode Robux</span><select id="robuxMethod" name="method"><option value="gamepass">Game Pass</option><option value="username">Via Username</option></select></label>' +
+      '<label class="field" id="robuxCountWrap" hidden><span>Jumlah Robux</span><input id="robuxCount" type="number" name="robux" min="' + esc(numberSetting(config.robuxMin, 10)) + '" step="1" placeholder="Jumlah Robux"></label>' +
+      '<label class="field" id="robloxUsernameWrap" hidden><span>Username Roblox</span><input name="robloxUsername" maxlength="100" placeholder="Username Roblox"></label>' +
+      '<label class="field wide" id="gamepassWrap" hidden><span>Link Game Pass</span><input name="gamepassUrl" type="url" maxlength="500" placeholder="https://www.roblox.com/..."></label>' +
+      '<div class="currency-note wide" id="withdrawCalc">Biaya admin DANA saat ini: ' + cash(fee) + '. Nominal ini ditampilkan sebelum request dikirim.</div>' +
+      '<div class="wide"><button class="button button-primary full" type="submit">Kirim request withdraw</button></div></form></section>' +
+      '<section class="panel"><div class="panel-heading"><div><h2>Riwayat withdraw</h2><p>Status diperbarui setelah admin memproses request.</p></div></div><div class="stack">' + (requestHtml || '<div class="empty-state">Belum ada request withdraw.</div>') + '</div></section>';
+    var form = $('#withdrawForm');
+    var updateCalc = function () {
+      var type = $('#withdrawType').value, amount = Number($('#withdrawAmount').value || 0);
+      var method = $('#robuxMethod').value, count = Number($('#robuxCount').value || 0);
+      $('#danaDestinationWrap').hidden = type !== 'dana';
+      $('#robuxMethodWrap').hidden = type !== 'robux';
+      $('#robuxCountWrap').hidden = type !== 'robux';
+      $('#robloxUsernameWrap').hidden = type !== 'robux';
+      $('#gamepassWrap').hidden = type !== 'robux' || method !== 'gamepass';
+      if (type === 'dana') {
+        var payout = amount - fee;
+        $('#withdrawCalc').textContent = 'Biaya admin DANA saat ini ' + cash(fee) + '. Saldo dipotong ' + cash(amount) + '; estimasi diterima ' + cash(Math.max(0, payout)) + '.';
+      } else {
+        var rate = numberSetting(method === 'gamepass' ? config.gamepassRate : config.usernameRate, method === 'gamepass' ? 170 : 230);
+        var cost = count * rate;
+        $('#withdrawCalc').textContent = 'Tarif ' + cash(rate) + ' per Robux. ' + count + ' Robux akan memotong saldo ' + cash(cost) + '. Minimal ' + numberSetting(config.robuxMin, 10) + ' Robux.';
+      }
+    };
+    ['change', 'input'].forEach(function (evt) { $('#withdrawType').addEventListener(evt, updateCalc); $('#robuxMethod').addEventListener(evt, updateCalc); $('#withdrawAmount').addEventListener(evt, updateCalc); $('#robuxCount').addEventListener(evt, updateCalc); });
+    updateCalc();
+    form.addEventListener('submit', async function (event) {
+      event.preventDefault();
+      var submit = $('button[type="submit"]', form); submit.disabled = true; submit.textContent = 'Mengirim request…';
+      try {
+        if ($('#withdrawType').value === 'dana') {
+          var amount = Number(form.amount.value);
+          if (!Number.isSafeInteger(amount) || amount <= 0) throw new Error('Nominal saldo harus berupa angka positif.');
+          if (amount <= fee) throw new Error('Nominal penarikan harus lebih besar dari biaya admin DANA ' + cash(fee) + '.');
+          if (!form.destination.value.trim()) throw new Error('Nomor DANA wajib diisi.');
+          await api('/api/withdrawals', { method: 'POST', body: JSON.stringify({ method: 'DANA', amount: amount, destination: form.destination.value.trim() }) });
+        } else {
+          var robux = Number(form.robux.value);
+          var methodName = form.elements.namedItem('method').value;
+          var uname = form.robloxUsername.value.trim();
+          var url = form.gamepassUrl.value.trim();
+          if (!Number.isSafeInteger(robux) || robux < numberSetting(config.robuxMin, 10)) throw new Error('Jumlah Robux di bawah batas minimum.');
+          if (!uname) throw new Error('Username Roblox wajib diisi.');
+          if (methodName === 'gamepass' && !/^https:\/\/www\.roblox\.com\//i.test(url)) throw new Error('Link Game Pass Roblox wajib diisi.');
+          await api('/api/robux', { method: 'POST', body: JSON.stringify({ method: methodName, robux: robux, username: uname, gamepassUrl: methodName === 'gamepass' ? url : '' }) });
+        }
+        await refreshUser();
+        showDialog('Request terkirim', 'Request kamu sedang diproses berdasarkan antrean. Mohon menunggu.', { autoMs: 3000 });
+        await navigate('withdraw');
+      } catch (error) { showDialog('Request belum terkirim', error.message, { kind: 'error' }); }
+      finally { submit.disabled = false; submit.textContent = 'Kirim request withdraw'; }
+    });
+  };
+  var renderChat = async function () {
+    clearInterval(state.chatTimer);
+    state.chatTimer = null;
+    var rows = await api('/api/chat');
+    $('#viewRoot').innerHTML = '<section class="panel chat-panel"><div class="panel-heading"><div><h2>Global Chat</h2><p>Jangan spam, promosi, atau membagikan informasi pribadi.</p></div><button id="chatRefresh" class="button button-soft" type="button">Perbarui</button></div><div id="chatMessages" class="chat-messages">' + chatHtml(rows) + '</div><form id="chatForm" class="chat-send"><input name="message" maxlength="1000" autocomplete="off" placeholder="Tulis pesan..." required><button class="button button-primary" type="submit">Kirim</button></form><p class="hint">Perintah mute hanya untuk admin/staff: /mute @username 7 atau /unmute @username</p></section>';
+    $('#chatRefresh').addEventListener('click', async function () { try { await renderChat(); say('Chat diperbarui.'); } catch (e) { showDialog('Chat gagal dimuat', e.message, { kind: 'error' }); } });
+    $('#chatForm').addEventListener('submit', async function (event) {
+      event.preventDefault();
+      var form = event.currentTarget, input = form.message, button = $('button[type="submit"]', form), message = input.value.trim();
+      if (!message) return;
+      button.disabled = true;
+      try {
+        var result = await api('/api/chat', { method: 'POST', body: JSON.stringify({ message: message }) });
+        if (result.command) showDialog('Perintah berhasil', result.message || 'Perintah moderator berhasil dijalankan.', { autoMs: 3000 });
+        else say('Pesan terkirim.');
+        await renderChat();
+      } catch (error) { showDialog('Pesan belum terkirim', error.message, { kind: 'error' }); }
+      finally { button.disabled = false; input.value = ''; }
+    });
+    var area = $('#chatMessages'); area.scrollTop = area.scrollHeight;
+    state.chatTimer = setInterval(async function () {
+      if (state.view !== 'chat') return;
+      var liveArea = $('#chatMessages');
+      if (!liveArea) return;
+      var wasNearBottom = liveArea.scrollHeight - liveArea.scrollTop - liveArea.clientHeight < 50;
+      try {
+        var fresh = await api('/api/chat');
+        if (state.view !== 'chat' || !$('#chatMessages')) return;
+        liveArea = $('#chatMessages');
+        liveArea.innerHTML = chatHtml(fresh);
+        if (wasNearBottom) liveArea.scrollTop = liveArea.scrollHeight;
+      } catch (error) {
+        // Keep the existing messages on a transient poll failure.
+      }
+    }, 5000);
+  };
+  var chatHtml = function (rows) {
+    if (!Array.isArray(rows) || !rows.length) return '<div class="empty-state">Belum ada pesan. Mulai percakapan dengan sopan.</div>';
+    return rows.map(function (row) {
+      var mine = state.user && row.user_id === state.user.id;
+      return '<article class="chat-row ' + (mine ? 'mine' : '') + '"><time>' + esc(date(row.created_at)) + '</time><b>' + esc(row.username || 'Member') + '</b><p>' + esc(row.message) + '</p></article>';
+    }).join('');
+  };
+  var renderMaintenance = async function () {
+    var result = await api('/api/admin/settings');
+    var cfg = {};
+    (result || []).forEach(function (item) { cfg[item.key] = item.value; });
+    var checked = function (value) { return String(value).toLowerCase() === 'true' || value === true ? 'checked' : ''; };
+    $('#viewRoot').innerHTML = '<section class="panel"><div class="panel-heading"><div><h2>Maintenance</h2><p>Jika aktif, pengguna diblokir sampai admin menonaktifkannya atau waktu buka kembali tercapai.</p></div></div><form id="maintenanceForm" class="form-grid">' +
+      '<label class="check-row wide"><span>Aktifkan maintenance (popup tidak bisa ditutup)</span><span class="switch"><input name="maintenanceEnabled" type="checkbox" ' + checked(cfg.maintenanceEnabled) + '><span></span></span></label>' +
+      '<label class="field wide"><span>Alasan maintenance</span><textarea name="maintenanceReason" maxlength="1000" placeholder="Sedang dilakukan perbaikan sistem">' + esc(cfg.maintenanceReason || '') + '</textarea></label>' +
+      '<label class="field wide"><span>Perkiraan dibuka kembali (opsional)</span><input name="maintenanceReopenAt" type="datetime-local" value="' + esc(localInput(cfg.maintenanceReopenAt)) + '"></label>' +
+      '<div class="wide"><button class="button button-primary" type="submit">Simpan maintenance</button></div></form></section>' +
+      '<section class="panel"><div class="panel-heading"><div><h2>Pengumuman</h2><p>Popup informasi yang bisa ditutup user melalui OK atau otomatis.</p></div></div><form id="announcementForm" class="form-grid">' +
+      '<label class="check-row wide"><span>Tampilkan pengumuman ke pengguna</span><span class="switch"><input name="announcementEnabled" type="checkbox" ' + checked(cfg.announcementEnabled) + '><span></span></span></label>' +
+      '<label class="field wide"><span>Judul pengumuman</span><input name="announcementTitle" maxlength="120" value="' + esc(cfg.announcementTitle || '') + '" placeholder="Informasi penting"></label>' +
+      '<label class="field wide"><span>Isi pengumuman</span><textarea name="announcementMessage" maxlength="2000" placeholder="Tulis pemberitahuan untuk semua pengguna">' + esc(cfg.announcementMessage || '') + '</textarea></label>' +
+      '<div class="wide"><button class="button button-primary" type="submit">Simpan pengumuman</button></div></form></section>';
+    $('#maintenanceForm').addEventListener('submit', async function (event) {
+      event.preventDefault();
+      var form = event.currentTarget, button = $('button[type="submit"]', form); button.disabled = true;
+      try {
+        await api('/api/admin/settings', { method: 'POST', body: JSON.stringify({
+          maintenanceEnabled: form.maintenanceEnabled.checked,
+          maintenanceReason: form.maintenanceReason.value.trim() || 'Sistem sedang dalam pemeliharaan.',
+          maintenanceReopenAt: form.maintenanceReopenAt.value ? new Date(form.maintenanceReopenAt.value).toISOString() : ''
+        }) });
+        showDialog('Maintenance tersimpan', 'Pengaturan maintenance sudah diperbarui.', { autoMs: 3000 });
+        await applyMaintenance();
+      } catch (error) { showDialog('Gagal menyimpan', error.message, { kind: 'error' }); }
+      finally { button.disabled = false; }
+    });
+    $('#announcementForm').addEventListener('submit', async function (event) {
+      event.preventDefault();
+      var form = event.currentTarget, button = $('button[type="submit"]', form); button.disabled = true;
+      try {
+        await api('/api/admin/settings', { method: 'POST', body: JSON.stringify({
+          announcementEnabled: form.announcementEnabled.checked,
+          announcementTitle: form.announcementTitle.value.trim() || 'Pengumuman',
+          announcementMessage: form.announcementMessage.value.trim(),
+          announcementUpdatedAt: new Date().toISOString()
+        }) });
+        showDialog('Pengumuman tersimpan', 'Pengumuman akan tampil kepada pengguna yang membuka website.', { autoMs: 3000 });
+      } catch (error) { showDialog('Gagal menyimpan', error.message, { kind: 'error' }); }
+      finally { button.disabled = false; }
+    });
+  };
+  var localInput = function (value) {
+    if (!value) return '';
+    var d = new Date(value);
+    return Number.isNaN(d.getTime()) ? '' : new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+  };
+  var renderRequests = async function () {
+    var result = await Promise.all([api('/api/admin/withdrawals'), api('/api/admin/robux'), api('/api/admin/users')]);
+    var requests = [];
+    (result[0] || []).forEach(function (item) { requests.push(Object.assign({ kind: 'dana' }, item)); });
+    (result[1] || []).forEach(function (item) { requests.push(Object.assign({ kind: 'robux' }, item)); });
+    requests.sort(function (a, b) { return new Date(b.created_at) - new Date(a.created_at); });
+    var users = {};
+    (result[2] || []).forEach(function (u) { users[u.id] = u.username || u.id; });
+    var pending = requests.filter(function (r) { return r.status === 'pending'; }).length;
+    state.pendingCount = pending;
+    $('#pendingBadge').textContent = String(pending);
+    $('#pendingBadge').classList.toggle('hidden', pending === 0);
+    $('#viewRoot').innerHTML = '<section class="panel"><div class="panel-heading"><div><h2>Semua request withdraw</h2><p>Request Dana dan Robux tergabung di bawah. Terima hanya setelah pembayaran benar-benar selesai.</p></div><button id="enableNotify" class="button button-soft" type="button">Aktifkan notifikasi</button></div><div class="stack">' + (requests.map(function (item) {
+      var id = item.kind === 'dana' ? item.id : item.id;
+      var pendingItem = item.status === 'pending';
+      var methodText = item.kind === 'dana' ? 'DANA' : 'ROBUX · ' + (item.method === 'gamepass' ? 'Game Pass' : 'Username');
+      var debit = item.kind === 'dana' ? item.amount : item.cost;
+      var payout = item.kind === 'dana' ? item.payout_amount : null;
+      var detail = item.kind === 'dana' ? 'Tujuan: ' + item.destination : 'Username Roblox: ' + item.username + (item.method === 'gamepass' ? ' · Game Pass: ' + item.gamepass_url : '');
+      return '<article class="request-card"><div class="card-top"><div><h3>' + esc(methodText) + '</h3><p>@' + esc(users[item.user_id] || 'user') + ' · ' + esc(date(item.created_at)) + '</p></div>' + statusTag(item.status) + '</div>' +
+      '<div class="request-meta"><div><small>Saldo dipotong</small><strong>' + cash(debit) + '</strong></div><div><small>' + (item.kind === 'dana' ? 'Dana dikirim' : 'Jumlah Robux') + '</small><strong>' + (item.kind === 'dana' ? cash(payout == null ? debit : payout) : esc(item.robux + ' Robux')) + '</strong></div></div>' +
+      (item.kind === 'dana' ? '<p>' + esc(detail) + ' · Biaya admin ' + cash(item.fee_amount || Math.max(0, Number(debit) - Number(payout == null ? debit : payout))) + '</p>' : '<p>' + esc(detail) + '<br>Tarif: ' + cash(item.rate) + ' per Robux</p>') +
+      (item.review_note ? '<div class="inline-alert danger-alert">Alasan penolakan: ' + esc(item.review_note) + '</div>' : '') +
+      (pendingItem ? '<div class="button-row"><button class="button button-danger" type="button" data-review="reject" data-kind="' + item.kind + '" data-id="' + esc(id) + '">Tolak</button><button class="button button-success" type="button" data-review="accept" data-kind="' + item.kind + '" data-id="' + esc(id) + '">Terima</button></div>' : '') +
+      '</article>';
+    }).join('') || '<div class="empty-state"><b>Belum ada request</b>Request baru akan tampil di antrean ini.</div>') + '</div></section>';
+    $('#enableNotify').addEventListener('click', async function () {
+      if (!('Notification' in window)) { showDialog('Notifikasi tidak didukung', 'Browser ini tidak menyediakan notifikasi web. Antrean tetap bisa diperiksa lewat menu ini.', { kind: 'warning' }); return; }
+      try {
+        var permission = await Notification.requestPermission();
+        state.notificationReady = permission === 'granted';
+        if (state.notificationReady) showDialog('Notifikasi aktif', 'Browser akan memberi notifikasi saat ada request baru selama website terbuka.', { autoMs: 3000 });
+        else showDialog('Izin belum diberikan', 'Aktifkan izin notifikasi situs melalui pengaturan browser bila diperlukan.', { kind: 'warning' });
+      } catch (e) { showDialog('Notifikasi gagal diaktifkan', 'Browser tidak mengizinkan notifikasi saat ini.', { kind: 'error' }); }
+    });
+    $$('[data-review]').forEach(function (button) {
+      button.addEventListener('click', function () {
+        var kind = button.dataset.kind, id = button.dataset.id;
+        if (button.dataset.review === 'reject') {
+          showPrompt('Tolak request', 'Wajib isi alasan. Saldo yang ditahan akan dikembalikan setelah penolakan berhasil.', 'Contoh: Data tujuan tidak valid', async function (reason) {
+            await reviewRequest(kind, id, false, reason);
+            await navigate('requests');
+            return { title: 'Request ditolak', message: 'Alasan tersimpan dan saldo yang ditahan sudah dikembalikan.', options: { autoMs: 3000, kind: 'warning', icon: '×' } };
+          });
+        } else {
+          showDialog('Konfirmasi penyelesaian', 'Pastikan Dana/Robux sudah benar-benar dikirim sebelum mengonfirmasi request ini.', { kind: 'warning', icon: '!' });
+          var layer = $('#dialogLayer');
+          var oldOk = $('#dialogOk');
+          oldOk.textContent = 'Sudah selesai, terima';
+          oldOk.className = 'button button-success';
+          oldOk.addEventListener('click', async function acceptClick() {
+            try {
+              await reviewRequest(kind, id, true, '');
+              closeDialog();
+              showDialog('WITHDRAW DITERIMA', 'Request berhasil ditandai selesai.', { autoMs: 2000, icon: '✓' });
+              await navigate('requests');
+            } catch (error) { closeDialog(); showDialog('Belum berhasil', error.message, { kind: 'error' }); }
+          }, { once: true });
+        }
+      });
+    });
+  };
+  var reviewRequest = async function (kind, id, accept, note) {
+    var route = kind === 'dana' ? 'withdrawals' : 'robux';
+    var status = accept ? (kind === 'dana' ? 'paid' : 'completed') : 'rejected';
+    await api('/api/admin/' + route + '/' + encodeURIComponent(id) + '/review', { method: 'POST', body: JSON.stringify({ status: status, note: note }) });
+  };
+  var renderJobReviews = async function () {
+    var results = await Promise.all([api('/api/admin/submissions'), api('/api/admin/users'), api('/api/admin/jobs')]);
+    var users = {}, jobs = {};
+    (results[1] || []).forEach(function (item) { users[item.id] = item.username || item.id; });
+    (results[2] || []).forEach(function (item) { jobs[item.id] = item; });
+    var submissions = (results[0] || []).slice().sort(function (a, b) { return new Date(b.created_at) - new Date(a.created_at); });
+    var html = submissions.map(function (item) {
+      var job = jobs[item.job_id] || {};
+      return '<article class="request-card"><div class="card-top"><div><h3>' + esc(job.title || ('Job #' + item.job_id)) + '</h3><p>@' + esc(users[item.user_id] || 'user') + ' · ' + esc(date(item.created_at)) + '</p></div>' + statusTag(item.status) + '</div>' +
+        '<div class="request-meta"><div><small>Reward job</small><strong>' + cash(job.reward || 0) + '</strong></div><div><small>Kuota terpakai</small><strong>' + esc(job.quota_used || 0) + '/' + esc(job.quota == null ? '∞' : job.quota) + '</strong></div></div>' +
+        (item.note ? '<p>' + esc(item.note) + '</p>' : '<p class="subtle">Tidak ada catatan dari pengguna.</p>') +
+        (item.proof_url ? '<div class="button-row"><button class="button button-outline" type="button" data-proof-id="' + esc(item.id) + '">Lihat foto bukti</button></div>' : '<p class="subtle">Foto bukti tidak dilampirkan.</p>') +
+        (item.review_note ? '<div class="inline-alert ' + (item.status === 'rejected' ? 'danger-alert' : '') + '">Catatan admin: ' + esc(item.review_note) + '</div>' : '') +
+        (item.status === 'pending' ? '<div class="button-row"><button class="button button-danger" type="button" data-job-review="reject" data-id="' + esc(item.id) + '">Tolak</button><button class="button button-success" type="button" data-job-review="accept" data-id="' + esc(item.id) + '">Setujui reward</button></div>' : '') +
+        '</article>';
+    }).join('');
+    $('#viewRoot').innerHTML = '<section class="panel"><div class="panel-heading"><div><h2>Pengajuan job</h2><p>Reward masuk setelah pengajuan disetujui. Penolakan butuh alasan dan membebaskan satu kuota job.</p></div></div><div class="stack">' + (html || '<div class="empty-state">Belum ada pengajuan job.</div>') + '</div></section>';
+    $$('[data-proof-id]').forEach(function (button) {
+      button.addEventListener('click', async function () {
+        button.disabled = true;
+        try {
+          var proof = await api('/api/submissions/' + encodeURIComponent(button.dataset.proofId) + '/proof');
+          var layer = $('#dialogLayer');
+          closeDialog();
+          layer.innerHTML = '<section class="dialog-card" role="dialog" aria-modal="true"><h2 style="margin-bottom:12px">Foto bukti job</h2><img src="' + esc(proof.url) + '" alt="Foto bukti pengajuan" style="display:block;max-width:100%;max-height:65dvh;object-fit:contain;margin:0 auto;border-radius:12px"><div class="dialog-actions"><button id="proofOk" class="button button-primary" type="button">OK</button></div></section>';
+          layer.classList.remove('hidden');
+          $('#proofOk').addEventListener('click', closeDialog);
+        } catch (error) { showDialog('Bukti tidak dapat dibuka', error.message, { kind: 'error' }); }
+        finally { button.disabled = false; }
+      });
+    });
+    $$('[data-job-review]').forEach(function (button) {
+      button.addEventListener('click', function () {
+        var id = button.dataset.id;
+        if (button.dataset.jobReview === 'reject') {
+          showPrompt('Tolak pengajuan job', 'Isi alasan penolakan agar pengguna tahu apa yang perlu diperbaiki.', 'Jelaskan alasan penolakan', async function (reason) {
+            await api('/api/admin/submissions/' + encodeURIComponent(id) + '/review', { method: 'POST', body: JSON.stringify({ status: 'rejected', note: reason }) });
+            await navigate('review-jobs');
+            return { title: 'Pengajuan ditolak', message: 'Alasan tersimpan dan satu kuota job dibebaskan.', options: { autoMs: 3000, kind: 'warning', icon: '×' } };
+          });
+        } else {
+          var selected = (results[0] || []).find(function (x) { return String(x.id) === String(id); });
+          var selectedJob = selected ? jobs[selected.job_id] : null;
+          showDialog('Setujui pengajuan?', 'Saldo reward ' + cash(selectedJob ? selectedJob.reward : 0) + ' akan ditambahkan ke akun pengguna jika disetujui.', { kind: 'warning', icon: '!' });
+          $('#dialogOk').textContent = 'Setujui reward';
+          $('#dialogOk').className = 'button button-success';
+          $('#dialogOk').addEventListener('click', async function acceptJob() {
+            try {
+              var res = await api('/api/admin/submissions/' + encodeURIComponent(id) + '/review', { method: 'POST', body: JSON.stringify({ status: 'approved', note: '' }) });
+              closeDialog();
+              await navigate('review-jobs');
+              showDialog('Job disetujui', 'Reward sudah ditambahkan ke saldo pengguna.', { autoMs: 3000 });
+            } catch (error) { closeDialog(); showDialog('Belum berhasil', error.message, { kind: 'error' }); }
+          }, { once: true });
+        }
+      });
+    });
+  };
+  var renderCodes = async function () {
+    var codes = await api('/api/admin/codes');
+    $('#viewRoot').innerHTML = '<section class="panel"><div class="panel-heading"><div><h2>Buat Unickcode</h2><p>Kode dapat dipakai setiap akun satu kali. Setelah batas penerima tercapai, kode otomatis habis.</p></div></div><form id="codeForm" class="form-grid"><label class="field"><span>UNICKCODE</span><input name="code" minlength="2" maxlength="80" required placeholder="Contoh: TESTING"></label><label class="field"><span>JUMLAH REWARD (Rp)</span><input name="reward" type="number" min="1" step="1" required placeholder="1000"></label><label class="field"><span>JUMLAH PENERIMA</span><input name="max_uses" type="number" min="1" step="1" required placeholder="10"></label><div class="wide"><button class="button button-primary" type="submit">Buat kode</button></div></form></section><section class="panel"><div class="panel-heading"><div><h2>Kode yang dibuat</h2></div></div><div class="stack">' + ((codes || []).map(function (code) {
+      return '<article class="code-row"><div><strong>' + esc(code.code) + '</strong><small>Reward ' + cash(code.reward) + ' · Dipakai ' + esc(code.used_count) + '/' + esc(code.max_uses) + '</small></div><span class="status ' + (code.active && Number(code.used_count) < Number(code.max_uses) ? 'success' : 'rejected') + '">' + (code.active && Number(code.used_count) < Number(code.max_uses) ? 'AKTIF' : 'HABIS') + '</span></article>';
+    }).join('') || '<div class="empty-state">Belum ada kode yang dibuat.</div>') + '</div></section>';
+    $('#codeForm').addEventListener('submit', async function (event) {
+      event.preventDefault();
+      var form = event.currentTarget, button = $('button[type="submit"]', form); button.disabled = true;
+      try {
+        await api('/api/admin/codes', { method: 'POST', body: JSON.stringify({ code: form.code.value.trim(), reward: Number(form.reward.value), max_uses: Number(form.max_uses.value) }) });
+        showDialog('Unickcode dibuat', 'Kode dapat digunakan sampai jumlah penerima yang kamu tentukan tercapai.', { autoMs: 3000 });
+        await navigate('codes');
+      } catch (error) { showDialog('Gagal membuat kode', error.message, { kind: 'error' }); }
+      finally { button.disabled = false; }
+    });
+  };
+  var renderCreateJob = function () {
+    $('#viewRoot').innerHTML = '<section class="panel"><div class="panel-heading"><div><h2>Job baru</h2><p>Kuota menghitung pengajuan yang masih aktif dan yang disetujui. Pengajuan yang ditolak membebaskan satu kuota.</p></div></div><form id="jobCreateForm" class="form-grid">' +
+      '<label class="field wide"><span>NAMA JOB</span><input name="title" maxlength="160" required placeholder="Nama pekerjaan"></label>' +
+      '<label class="field wide"><span>DESKRIPSI</span><textarea name="description" maxlength="4000" required placeholder="Jelaskan langkah-langkah pengerjaan"></textarea></label>' +
+      '<label class="field wide"><span>LINK JOB (opsional)</span><input name="link" type="url" maxlength="1000" placeholder="https://..."></label>' +
+      '<label class="field"><span>REWARD (Rp)</span><input name="reward" type="number" min="0" step="1" required placeholder="1000"></label>' +
+      '<label class="field"><span>KUOTA</span><input name="quota" type="number" min="1" step="1" required placeholder="10"></label>' +
+      '<label class="check-row wide"><span>Wajib kirim gambar bukti</span><span class="switch"><input name="photo_required" type="checkbox"><span></span></span></label>' +
+      '<div class="wide"><button class="button button-primary" type="submit">Buat job</button></div></form></section>';
+    $('#jobCreateForm').addEventListener('submit', async function (event) {
+      event.preventDefault();
+      var form = event.currentTarget, button = $('button[type="submit"]', form); button.disabled = true;
+      try {
+        await api('/api/admin/jobs', { method: 'POST', body: JSON.stringify({ title: form.title.value.trim(), description: form.description.value.trim(), link: form.link.value.trim(), reward: Number(form.reward.value), quota: Number(form.quota.value), photo_required: form.photo_required.checked }) });
+        showDialog('Job berhasil dibuat', 'Job kini muncul di dashboard pengguna dan kuotanya akan diperbarui otomatis.', { autoMs: 3000 });
+        await navigate('create-job');
+      } catch (error) { showDialog('Job gagal dibuat', error.message, { kind: 'error' }); }
+      finally { button.disabled = false; }
+    });
+  };
+  var renderPayoutSettings = async function () {
+    var result = await api('/api/admin/settings'), cfg = {};
+    (result || []).forEach(function (item) { cfg[item.key] = item.value; });
+    $('#viewRoot').innerHTML = '<section class="panel"><div class="panel-heading"><div><h2>Setting metode</h2><p>Pilih metode dulu, lalu isi satu tarif atau biaya untuk metode tersebut.</p></div></div><form id="payoutForm" class="form-grid">' +
+      '<label class="field wide"><span>SETTING METODE</span><select name="method" id="payoutMethod"><option value="gamepass">Robux — Game Pass</option><option value="username">Robux — Via Username</option><option value="dana">DANA</option></select></label>' +
+      '<label class="field wide" id="payoutValueWrap"><span id="payoutLabel">HARGA PER 1 ROBUX (Rp)</span><input id="payoutValue" name="value" type="number" min="0" step="1" required></label>' +
+      '<label class="field wide"><span>Minimal Robux (berlaku untuk kedua metode Robux)</span><input id="robuxMinSetting" type="number" min="1" step="1" value="' + esc(cfg.robuxMin == null ? 10 : cfg.robuxMin) + '" required></label>' +
+      '<div class="currency-note wide" id="payoutHelp">Tarif yang disimpan akan langsung digunakan ketika request baru dibuat.</div>' +
+      '<div class="wide"><button class="button button-primary" type="submit">Simpan setting metode</button></div></form></section>';
+    var method = $('#payoutMethod'), value = $('#payoutValue'), label = $('#payoutLabel'), help = $('#payoutHelp');
+    var values = { gamepass: cfg.gamepassRate == null ? 170 : cfg.gamepassRate, username: cfg.usernameRate == null ? 230 : cfg.usernameRate, dana: cfg.danaFee == null ? 2000 : cfg.danaFee };
+    var update = function () {
+      value.value = values[method.value];
+      label.textContent = method.value === 'dana' ? 'BIAYA ADMIN DANA (Rp)' : 'HARGA ROBUX PER 1 ROBUX (Rp)';
+      help.textContent = method.value === 'dana' ? 'Biaya ini dikurangi dari nominal penarikan. Nominal saldo yang ditahan tetap sebesar jumlah yang diminta; admin mengirim nominal setelah dipotong biaya admin.' : 'Tarif per Robux dikalikan jumlah Robux untuk menghitung saldo yang akan dipotong.';
+    };
+    method.addEventListener('change', update); update();
+    $('#payoutForm').addEventListener('submit', async function (event) {
+      event.preventDefault();
+      var button = $('button[type="submit"]', event.currentTarget), amount = Number(value.value), min = Number($('#robuxMinSetting').value);
+      if (!Number.isSafeInteger(amount) || amount < 0 || (method.value !== 'dana' && amount < 1)) { showDialog('Nominal tidak valid', 'Masukkan angka yang valid untuk metode terpilih.', { kind: 'error' }); return; }
+      if (!Number.isSafeInteger(min) || min < 1) { showDialog('Batas minimum tidak valid', 'Minimal Robux harus minimal 1.', { kind: 'error' }); return; }
+      button.disabled = true;
+      try {
+        var payload = { robuxMin: min };
+        if (method.value === 'dana') payload.danaFee = amount;
+        if (method.value === 'gamepass') payload.gamepassRate = amount;
+        if (method.value === 'username') payload.usernameRate = amount;
+        await api('/api/admin/settings', { method: 'POST', body: JSON.stringify(payload) });
+        showDialog('Setting tersimpan', 'Pengaturan metode penarikan berhasil diperbarui.', { autoMs: 3000 });
+        await renderPayoutSettings();
+      } catch (error) { showDialog('Setting gagal disimpan', error.message, { kind: 'error' }); }
+      finally { button.disabled = false; }
+    });
+  };
+  var startRequestPolling = function () {
+    clearInterval(state.pollTimer);
+    if (!state.user || state.user.role !== 'admin') return;
+    var check = async function () {
+      try {
+        var r = await Promise.all([api('/api/admin/withdrawals'), api('/api/admin/robux')]);
+        var count = (r[0] || []).filter(function (x) { return x.status === 'pending'; }).length + (r[1] || []).filter(function (x) { return x.status === 'pending'; }).length;
+        if (state.pendingCount !== null && count > state.pendingCount && state.notificationReady && 'Notification' in window) new Notification('Request withdraw baru', { body: 'Ada ' + (count - state.pendingCount) + ' request baru di antrean.' });
+        state.pendingCount = count;
+        $('#pendingBadge').textContent = String(count);
+        $('#pendingBadge').classList.toggle('hidden', count === 0);
+      } catch (e) { /* antrean dicoba lagi pada interval berikutnya */ }
+    };
+    check();
+    state.pollTimer = setInterval(check, 30000);
+  };
+  var bindTopLevel = function () {
+    $('#switchAuth').addEventListener('click', function () { setAuthMode($('#registerForm').classList.contains('hidden') ? 'register' : 'login'); });
+    $('#registerForm').addEventListener('submit', async function (event) {
+      event.preventDefault();
+      var form = event.currentTarget, button = $('button[type="submit"]', form), username = form.username.value.trim(), password = form.password.value;
+      if (password !== form.confirm.value) { authMessage('Konfirmasi password tidak sama.'); return; }
+      button.disabled = true; button.textContent = 'Membuat akun…';
+      try {
+        var result = await api('/api/register', { method: 'POST', body: JSON.stringify({ username: username, password: password }) });
+        showDialog('Berhasil daftar', 'Akun berhasil dibuat. Kamu akan dialihkan ke dashboard dalam 3 detik.', { autoMs: 3000, onClose: function () { setLoggedIn(result.user); } });
+      } catch (error) { authMessage(error.message); }
+      finally { button.disabled = false; button.textContent = 'Daftar'; }
+    });
+    $('#loginForm').addEventListener('submit', async function (event) {
+      event.preventDefault();
+      var form = event.currentTarget, button = $('button[type="submit"]', form);
+      button.disabled = true; button.textContent = 'Memeriksa…';
+      try {
+        var result = await api('/api/login', { method: 'POST', body: JSON.stringify({ username: form.username.value.trim(), password: form.password.value }) });
+        showDialog('Login berhasil', 'Kamu akan dialihkan ke dashboard dalam 3 detik.', { autoMs: 3000, onClose: function () { setLoggedIn(result.user); } });
+      } catch (error) { authMessage(error.message); }
+      finally { button.disabled = false; button.textContent = 'Login'; }
+    });
+    $('#menuButton').addEventListener('click', function () { toggleMenu(); });
+    $('#closeMenu').addEventListener('click', function () { toggleMenu(false); });
+    $('#drawerShade').addEventListener('click', function () { toggleMenu(false); });
+    $$('.nav-link[data-view]').forEach(function (button) { button.addEventListener('click', function () { navigate(button.dataset.view); }); });
+    var logout = async function () {
+      try { await api('/api/logout', { method: 'POST', body: '{}' }); } catch (e) { /* UI still returns to login */ }
+      closeDialog(); setLoggedOut(); showDialog('Sudah keluar', 'Kamu telah keluar dari akun.', { autoMs: 2500 });
+    };
+    $('#logoutButton').addEventListener('click', function () { showDialog('Keluar akun?', 'Sesi kamu akan ditutup.', { kind: 'warning' }); $('#dialogOk').textContent = 'Ya, keluar'; $('#dialogOk').addEventListener('click', logout, { once: true }); });
+    $('#drawerLogout').addEventListener('click', logout);
+    $('#refreshButton').addEventListener('click', function () { navigate(state.view).then(function () { say('Data diperbarui.'); }).catch(function () { /* navigasi menampilkan pesan error */ }); });
+    document.addEventListener('keydown', function (event) {
+      if (event.key === 'Escape' && state.maintenance && state.maintenance.enabled) { event.preventDefault(); return; }
+      if (event.key === 'Escape') closeMenu();
+    });
+  };
+  var boot = async function () {
+    await applyMaintenance();
+    setInterval(applyMaintenance, 30000);
+    try {
+      var result = await api('/api/me');
+      await setLoggedIn(result.user);
+    } catch (e) {
+      setLoggedOut();
+    }
+  };
+  bindTopLevel();
+  setAuthMode('register');
+  boot();
+})();

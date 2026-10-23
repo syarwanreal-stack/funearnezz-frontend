@@ -114,6 +114,11 @@ async function requireAdmin(request,env) {
   if(session.profile.role!=="admin") throw Object.assign(new Error("Akses admin ditolak"),{status:403});
   return session;
 }
+async function requireStaff(request,env) {
+  const session=await requireUser(request,env);
+  if(!["admin","staff"].includes(session.profile.role)) throw Object.assign(new Error("Perintah ini khusus admin atau staff"),{status:403});
+  return session;
+}
 async function audit(env, actor, action, details={}) {
   try { await rest(env,"audit_logs","",{method:"POST",headers:{Prefer:"return=minimal"},body:JSON.stringify({actor_id:actor,action,details})}); } catch {}
 }
@@ -155,6 +160,8 @@ async function handle(request,env) {
     if(method==="POST" && (
       path==="/api/withdrawals" ||
       path==="/api/robux" ||
+      path==="/api/codes/redeem" ||
+      (path==="/api/chat" && method==="POST") ||
       (path.startsWith("/api/jobs/") && path.endsWith("/submit"))
     )) {
       await ensureMaintenanceOff(env);
@@ -225,7 +232,17 @@ try {
     }
     if((path==="/api/logout"||path==="/api/auth/logout")&&method==="POST") return reply({ok:true},200,{...cors(request,env),"Set-Cookie":cookie("",0)});
     if(path==="/api/me"&&method==="GET") {const s=await requireUser(request,env);return reply({user:safeProfile(s.profile)},200,cors(request,env));}
-    if(path==="/api/config"&&method==="GET") return reply({captchaRequired:false,appName:"FunEarnEzz"},200,cors(request,env));
+    if(path==="/api/config"&&method==="GET") {
+      const keys=["robuxMin","gamepassRate","usernameRate","danaFee","announcementEnabled","announcementTitle","announcementMessage","announcementUpdatedAt"];
+      const rows=await rest(env,"settings","key=in.("+keys.join(",")+")&select=key,value");
+      const all=Object.fromEntries((rows||[]).map(row=>[row.key,row.value]));
+      const settings=Object.fromEntries(keys.map(key=>[key,Object.prototype.hasOwnProperty.call(all,key)?all[key]:null]));
+      if(settings.robuxMin==null) settings.robuxMin=10;
+      if(settings.gamepassRate==null) settings.gamepassRate=170;
+      if(settings.usernameRate==null) settings.usernameRate=230;
+      if(settings.danaFee==null) settings.danaFee=2000;
+      return reply({captchaRequired:false,settings},200,cors(request,env));
+    }
     if(path==="/api/dashboard"&&method==="GET") {
       const s=await requireUser(request,env);
       const [jobs,submissions,withdrawals]=await Promise.all([
@@ -235,10 +252,23 @@ try {
       ]);
       return reply({user:safeProfile(s.profile),jobs,stats:{submissions:submissions.length,withdrawals:withdrawals.length}},200,cors(request,env));
     }
-    if(path==="/api/jobs"&&method==="GET") return reply(await rest(env,"jobs","status=eq.active&select=*&order=created_at.desc"),200,cors(request,env));
+    if(path==="/api/jobs"&&method==="GET") {
+      const rows=await rest(env,"jobs","status=eq.active&select=*&order=created_at.desc");
+      const available=(rows||[]).filter(job=>job.quota==null||Number(job.quota_used||0)<Number(job.quota));
+      return reply(available,200,cors(request,env));
+    }
+    if(path==="/api/withdrawals"&&method==="GET") {
+      const s=await requireUser(request,env);
+      return reply(await rest(env,"withdrawals","user_id=eq."+encodeURIComponent(s.user.id)+"&select=*&order=created_at.desc"),200,cors(request,env));
+    }
     if(path==="/api/wallet"&&method==="GET") {const s=await requireUser(request,env);const transactions=await rest(env,"wallet_transactions","user_id=eq."+s.user.id+"&select=*&order=created_at.desc&limit=100");return reply({balance:Number(s.profile.balance||0),reserved_balance:Number(s.profile.reserved_balance||0),transactions},200,cors(request,env));}
     let m=path.match(/^\/api\/jobs\/([^/]+)$/);
-    if(m&&method==="GET") {const rows=await rest(env,"jobs","id=eq."+encodeURIComponent(m[1])+"&select=*");return rows[0]?reply(rows[0],200,cors(request,env)):fail("Tugas tidak ditemukan",404,cors(request,env));}
+    if(m&&method==="GET") {
+      const rows=await rest(env,"jobs","id=eq."+encodeURIComponent(m[1])+"&select=*");
+      const job=rows[0];
+      if(!job||job.status!=="active"||(job.quota!=null&&Number(job.quota_used||0)>=Number(job.quota))) return fail("Tugas tidak tersedia atau kuotanya sudah habis.",404,cors(request,env));
+      return reply(job,200,cors(request,env));
+    }
     m=path.match(/^\/api\/jobs\/([^/]+)\/submit$/);
     if(m&&method==="POST") {
       const s=await requireUser(request,env), b=await body(request);
@@ -284,7 +314,7 @@ try {
     }
     if(path==="/api/withdrawals"&&method==="POST") {
       const s=await requireUser(request,env), b=await body(request), amount=Number(b.amount);
-      if(!Number.isFinite(amount)||amount<=0||amount>Number(s.profile.balance||0)) return fail("Saldo tidak mencukupi atau jumlah tidak valid");
+      if(!Number.isSafeInteger(amount)||amount<=0||amount>Number(s.profile.balance||0)) return fail("Nominal penarikan harus berupa angka bulat positif dan tidak melebihi saldo.");
       const rows=await sb(env,"/rest/v1/rpc/create_withdrawal",{method:"POST",body:JSON.stringify({p_user_id:s.user.id,p_amount:amount,p_method:String(b.method||"").slice(0,50),p_destination:String(b.destination||"").slice(0,200)})});
       return reply({ok:true,result:rows},201,cors(request,env));
     }
@@ -310,6 +340,69 @@ try {
       return reply({ok:true,request:created,method:methodName,robux,rate,cost,message:"Permintaan dikirim. Saldo yang ditahan: Rp "+cost.toLocaleString("id-ID")+"."},201,cors(request,env));
     }
     if(path==="/api/robux"&&method==="GET") {const s=await requireUser(request,env);return reply(await rest(env,"robux_requests","user_id=eq."+s.user.id+"&select=*&order=created_at.desc"),200,cors(request,env));}
+    if(path==="/api/codes/redeem"&&method==="POST") {
+      const s=await requireUser(request,env),b=await body(request),code=String(b.code||"").trim().slice(0,80);
+      if(!code) return fail("Masukkan Unickcode terlebih dahulu.",400,cors(request,env));
+      const result=await sb(env,"/rest/v1/rpc/redeem_unique_code",{method:"POST",body:JSON.stringify({p_user_id:s.user.id,p_code:code})});
+      await audit(env,s.user.id,"unique_code.redeem",{code:code.toUpperCase()});
+      return reply({ok:true,reward:Number(result?.reward||0),result},200,cors(request,env));
+    }
+    if(path==="/api/admin/codes"&&method==="GET") {
+      await requireAdmin(request,env);
+      return reply(await rest(env,"unique_codes","select=id,code,reward,max_uses,used_count,active,created_at&order=created_at.desc"),200,cors(request,env));
+    }
+    if(path==="/api/admin/codes"&&method==="POST") {
+      const s=await requireAdmin(request,env),b=await body(request);
+      const code=String(b.code||"").trim().toUpperCase(),reward=Number(b.reward),maxUses=Number(b.max_uses);
+      if(!/^[A-Z0-9_-]{2,80}$/.test(code)) return fail("Kode hanya boleh berisi huruf, angka, underscore, atau tanda hubung (2–80 karakter).",400,cors(request,env));
+      if(!Number.isSafeInteger(reward)||reward<1||reward>1000000000) return fail("Reward harus berupa angka bulat positif.",400,cors(request,env));
+      if(!Number.isSafeInteger(maxUses)||maxUses<1||maxUses>1000000) return fail("Jumlah penerima harus antara 1 dan 1.000.000.",400,cors(request,env));
+      const rows=await rest(env,"unique_codes","",{method:"POST",headers:{Prefer:"return=representation"},body:JSON.stringify({code,reward,max_uses:maxUses,used_count:0,active:true,created_by:s.user.id})});
+      await audit(env,s.user.id,"unique_code.create",{code,reward,max_uses:maxUses});
+      return reply({ok:true,code:rows?.[0]},201,cors(request,env));
+    }
+    if(path==="/api/chat"&&method==="GET") {
+      await requireUser(request,env);
+      const rows=await rest(env,"global_chat_messages","select=id,user_id,username,message,created_at&order=created_at.desc&limit=100");
+      return reply((rows||[]).reverse(),200,cors(request,env));
+    }
+    if(path==="/api/chat"&&method==="POST") {
+      const s=await requireUser(request,env),b=await body(request),message=String(b.message||"").trim();
+      if(!message) return fail("Tulis pesan terlebih dahulu.",400,cors(request,env));
+      if(message.length>1000) return fail("Pesan maksimal 1.000 karakter.",400,cors(request,env));
+      let match=message.match(/^\/mute\s+@?([A-Za-z0-9_]{3,24})\s+([1-9][0-9]{0,2})$/i);
+      if(match) {
+        const moderator=await requireStaff(request,env),days=Number(match[2]);
+        if(days>365) return fail("Durasi mute maksimal 365 hari.",400,cors(request,env));
+        const targets=await rest(env,"profiles","username=ilike."+encodeURIComponent(match[1])+"&select=id,username");
+        if(!targets?.[0]) return fail("Username tidak ditemukan.",404,cors(request,env));
+        const until=new Date(Date.now()+days*86400000).toISOString();
+        await rest(env,"chat_mutes","on_conflict=user_id",{method:"POST",headers:{Prefer:"resolution=merge-duplicates,return=minimal"},body:JSON.stringify({user_id:targets[0].id,expires_at:until,created_by:moderator.user.id})});
+        await audit(env,moderator.user.id,"chat.mute",{target:targets[0].username,days});
+        return reply({ok:true,command:true,message:"@"+targets[0].username+" dibisukan selama "+days+" hari."},200,cors(request,env));
+      }
+      match=message.match(/^\/unmute\s+@?([A-Za-z0-9_]{3,24})$/i);
+      if(match) {
+        const moderator=await requireStaff(request,env);
+        const targets=await rest(env,"profiles","username=ilike."+encodeURIComponent(match[1])+"&select=id,username");
+        if(!targets?.[0]) return fail("Username tidak ditemukan.",404,cors(request,env));
+        await rest(env,"chat_mutes","user_id=eq."+encodeURIComponent(targets[0].id),{method:"DELETE",headers:{Prefer:"return=minimal"}});
+        await audit(env,moderator.user.id,"chat.unmute",{target:targets[0].username});
+        return reply({ok:true,command:true,message:"Mute @"+targets[0].username+" sudah dibuka."},200,cors(request,env));
+      }
+      if(/^\/mute\b|^\/unmute\b/i.test(message)) return fail("Format perintah: /mute @username 7 atau /unmute @username.",400,cors(request,env));
+      if (/(?:https?:\/\/|www\.|wa\.me\/|t\.me\/|discord\.gg\/|\b(?:jual|jualan|jasa|promo|promosi|joki|referral|subscribe|open\s+jasa|dm\s+for)\b)/i.test(message)) {
+        return fail("Promosi, tautan undangan, dan iklan tidak diperbolehkan di Global Chat.",400,cors(request,env));
+      }
+      const activeMutes=await rest(env,"chat_mutes","user_id=eq."+encodeURIComponent(s.user.id)+"&select=expires_at");
+      const mute=(activeMutes||[]).find(x=>Date.parse(x.expires_at)>Date.now());
+      if(mute) return fail("Kamu sedang di-mute sampai "+mute.expires_at+".",403,cors(request,env));
+      const since=new Date(Date.now()-10000).toISOString();
+      const recent=await rest(env,"global_chat_messages","user_id=eq."+encodeURIComponent(s.user.id)+"&created_at=gte."+encodeURIComponent(since)+"&select=id&limit=6");
+      if((recent||[]).length>=6) return fail("Terlalu cepat mengirim pesan. Tunggu sebentar agar chat nyaman.",429,cors(request,env));
+      const rows=await rest(env,"global_chat_messages","",{method:"POST",headers:{Prefer:"return=representation"},body:JSON.stringify({user_id:s.user.id,username:s.profile.username,message:message.slice(0,1000)})});
+      return reply({ok:true,message:rows?.[0]},201,cors(request,env));
+    }
     if(path==="/api/admin/overview"&&method==="GET") {
       await requireAdmin(request,env);
       const [users,jobs,subs,withdrawals]=await Promise.all([rest(env,"profiles","select=id"),rest(env,"jobs","select=id"),rest(env,"submissions","status=eq.pending&select=id"),rest(env,"withdrawals","status=eq.pending&select=id")]);
@@ -317,7 +410,20 @@ try {
       return reply({users:users.length,jobs:jobs.length,pending_submissions:subs.length,pending_withdrawals:withdrawals.length,pending_robux:robux.length},200,cors(request,env));
     }
     if(path==="/api/admin/jobs"&&method==="GET") {await requireAdmin(request,env);return reply(await rest(env,"jobs","select=*&order=created_at.desc"),200,cors(request,env));}
-    if(path==="/api/admin/jobs"&&method==="POST") {const s=await requireAdmin(request,env),b=await body(request);if(!String(b.title||"").trim()||!Number.isFinite(Number(b.reward))||Number(b.reward)<0)return fail("Judul wajib diisi dan reward harus berupa angka nol atau lebih.",400,cors(request,env));const rows=await rest(env,"jobs","",{method:"POST",headers:{Prefer:"return=representation"},body:JSON.stringify({title:String(b.title).slice(0,160),description:String(b.description||"").slice(0,4000),reward:Number(b.reward),photo_required:!!b.photo_required,status:"active"})});await audit(env,s.user.id,"job.create",{title:b.title});return reply(rows?.[0]||{ok:true},201,cors(request,env));}
+    if(path==="/api/admin/jobs"&&method==="POST") {
+      const s=await requireAdmin(request,env),b=await body(request);
+      const quota=(b.quota===undefined||b.quota===null||b.quota==="")?null:Number(b.quota);
+      if(!String(b.title||"").trim()||!Number.isSafeInteger(Number(b.reward))||Number(b.reward)<0) return fail("Nama job wajib diisi dan reward harus berupa angka bulat nol atau lebih.",400,cors(request,env));
+      if(quota!==null&&(!Number.isSafeInteger(quota)||quota<1||quota>1000000)) return fail("Kuota harus berupa angka bulat antara 1 dan 1.000.000.",400,cors(request,env));
+      const link=String(b.link||"").trim().slice(0,1000);
+      if(link) { try { const u=new URL(link); if(!["http:","https:"].includes(u.protocol)) return fail("Link job harus memakai HTTP atau HTTPS.",400,cors(request,env)); } catch { return fail("Format link job tidak valid.",400,cors(request,env)); } }
+      const rows=await rest(env,"jobs","",{method:"POST",headers:{Prefer:"return=representation"},body:JSON.stringify({
+        title:String(b.title).trim().slice(0,160),description:String(b.description||"").slice(0,4000),
+        link,reward:Number(b.reward),quota,quota_used:0,photo_required:!!b.photo_required,status:"active"
+      })});
+      await audit(env,s.user.id,"job.create",{title:b.title,quota});
+      return reply(rows?.[0]||{ok:true},201,cors(request,env));
+    }
     if(path==="/api/admin/submissions"&&method==="GET") {await requireAdmin(request,env);return reply(await rest(env,"submissions","select=*&order=created_at.desc"),200,cors(request,env));}
     if(path==="/api/admin/withdrawals"&&method==="GET") {await requireAdmin(request,env);return reply(await rest(env,"withdrawals","select=*&order=created_at.desc"),200,cors(request,env));}
     if(path==="/api/admin/robux"&&method==="GET") {await requireAdmin(request,env);return reply(await rest(env,"robux_requests","select=*&order=created_at.desc"),200,cors(request,env));}
@@ -328,6 +434,7 @@ try {
       const s=await requireAdmin(request,env),b=await body(request);
       const allowed={submissions:["approved","rejected"],withdrawals:["paid","rejected"],robux:["completed","rejected"]};
       if(!allowed[m[1]].includes(b.status))return fail("Status tidak valid untuk jenis pengajuan.",400,cors(request,env));
+      if(b.status==="rejected"&&!String(b.note||"").trim()) return fail("Alasan penolakan wajib diisi.",400,cors(request,env));
       const rpc={submissions:["review_submission","p_submission_id"],withdrawals:["review_withdrawal","p_withdrawal_id"],robux:["review_robux_request","p_robux_request_id"]}[m[1]];
       const args={ [rpc[1]]:m[2],p_status:b.status,p_note:String(b.note||"").slice(0,1000),p_admin_id:s.user.id};
       const result=await sb(env,"/rest/v1/rpc/"+rpc[0],{method:"POST",body:JSON.stringify(args)});
@@ -342,8 +449,28 @@ try {
       const result=await sb(env,"/rest/v1/rpc/admin_adjust_balance",{method:"POST",body:JSON.stringify({p_user_id:m[1],p_amount:delta,p_reason:String(b.reason||"Admin adjustment").slice(0,200)})});
       await audit(env,s.user.id,"user.adjust_balance",{id:m[1],amount:delta});return reply({ok:true,result},200,cors(request,env));
     }
-    if(path==="/api/admin/settings"&&method==="GET") {await requireAdmin(request,env);return reply(await rest(env,"settings","select=key,value&order=key.asc"),200,cors(request,env));}
-    if(path==="/api/admin/settings"&&method==="POST") {const s=await requireAdmin(request,env),b=await body(request);const allowed=new Set(["robuxMin","gamepassRate","usernameRate","maintenanceEnabled","maintenanceReason","maintenanceReopenAt"]);for(const [key,value] of Object.entries(b)){if(!allowed.has(key))return fail("Kunci pengaturan tidak diizinkan: "+key,400,cors(request,env));await rest(env,"settings","on_conflict=key",{method:"POST",headers:{Prefer:"resolution=merge-duplicates,return=minimal"},body:JSON.stringify({key,value})});}await audit(env,s.user.id,"settings.update",{keys:Object.keys(b)});return reply({ok:true},200,cors(request,env));}
+    if(path==="/api/admin/settings"&&method==="GET") {
+      await requireAdmin(request,env);
+      return reply(await rest(env,"settings","select=key,value&order=key.asc"),200,cors(request,env));
+    }
+    if(path==="/api/admin/settings"&&method==="POST") {
+      const s=await requireAdmin(request,env),b=await body(request);
+      const allowed=new Set(["robuxMin","gamepassRate","usernameRate","danaFee","maintenanceEnabled","maintenanceReason","maintenanceReopenAt","announcementEnabled","announcementTitle","announcementMessage","announcementUpdatedAt"]);
+      for(const [key,value] of Object.entries(b)) {
+        if(!allowed.has(key)) return fail("Kunci pengaturan tidak diizinkan: "+key,400,cors(request,env));
+        if(["robuxMin","gamepassRate","usernameRate","danaFee"].includes(key)) {
+          const n=Number(value);
+          if(!Number.isSafeInteger(n)||n<0||n>1000000000||(key==="robuxMin"&&n<1)||(key!=="danaFee"&&key!=="robuxMin"&&n<1)) return fail("Nilai pengaturan "+key+" tidak valid.",400,cors(request,env));
+        }
+        if(["maintenanceEnabled","announcementEnabled"].includes(key)&&typeof value!=="boolean") return fail("Status "+key+" harus berupa boolean.",400,cors(request,env));
+        const maxLength={maintenanceReason:1000,announcementTitle:120,announcementMessage:2000,maintenanceReopenAt:80,announcementUpdatedAt:80}[key];
+        if(maxLength&&typeof value!=="string") return fail("Nilai "+key+" harus berupa teks.",400,cors(request,env));
+        if(maxLength&&value.length>maxLength) return fail("Nilai "+key+" terlalu panjang.",400,cors(request,env));
+        await rest(env,"settings","on_conflict=key",{method:"POST",headers:{Prefer:"resolution=merge-duplicates,return=minimal"},body:JSON.stringify({key,value})});
+      }
+      await audit(env,s.user.id,"settings.update",{keys:Object.keys(b)});
+      return reply({ok:true},200,cors(request,env));
+    }
     return fail("Endpoint tidak ditemukan",404,cors(request,env));
   } catch(e) {
     let status=e.status||e.upstreamStatus||500;
