@@ -125,7 +125,7 @@ test("maintenance status endpoint reports reason and reopening time", async () =
     ]);
     return json({ message: "unexpected test request", path: url.pathname }, 500);
   }, async () => {
-    const response = await worker.fetch(request("/api/maintenance"), {},);
+    const response = await worker.fetch(request("/api/maintenance"), env);
     assert.equal(response.status, 200);
     assert.deepEqual(await response.json(), {
       enabled: true,
@@ -206,6 +206,42 @@ test("job creation includes the photo-required setting", async () => {
     assert.equal(response.status, 201, await response.clone().text());
     assert.equal(savedJob.photo_required, true);
     assert.equal(savedJob.status, "active");
+  });
+});
+
+
+test("Robux exchange creates a pending request through its dedicated RPC", async () => {
+  let rpcBody;
+  await withFetchStub(async (url, init) => {
+    if (url.pathname === "/rest/v1/settings" && url.search.includes("key=in.")) return json([]);
+    if (url.pathname === "/rest/v1/settings") return json([
+      { key: "robuxMin", value: 10 },
+      { key: "gamepassRate", value: 170 },
+      { key: "usernameRate", value: 230 },
+    ]);
+    if (url.pathname === "/auth/v1/user") return json({ id: "66666666-6666-4666-8666-666666666666" });
+    if (url.pathname === "/rest/v1/profiles") return json([{
+      id: "66666666-6666-4666-8666-666666666666", username: "member_3", role: "user",
+      balance: 1000, reserved_balance: 0, disabled: false,
+    }]);
+    if (url.pathname === "/rest/v1/rpc/create_robux_request") {
+      rpcBody = JSON.parse(init.body);
+      return json({ id: 24, status: "pending", method: "username", robux: 2, cost: 460 });
+    }
+    if (url.pathname === "/rest/v1/audit_logs") return new Response(null, { status: 204 });
+    return json({ message: "unexpected test request", path: url.pathname }, 500);
+  }, async () => {
+    const response = await worker.fetch(request("/api/robux", {
+      method: "POST", headers: { Authorization: "Bearer member-access-token", "content-type": "application/json" },
+      body: JSON.stringify({ method: "username", robux: 2, username: "test_roblox" }),
+    }), env);
+    assert.equal(response.status, 201, await response.clone().text());
+    assert.equal(rpcBody.p_user_id, "66666666-6666-4666-8666-666666666666");
+    assert.equal(rpcBody.p_method, "username");
+    assert.equal(rpcBody.p_robux, 2);
+    assert.equal(rpcBody.p_username, "test_roblox");
+    assert.equal(rpcBody.p_cost, 460);
+    assert.equal((await response.json()).request.status, "pending");
   });
 });
 
