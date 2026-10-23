@@ -22,7 +22,11 @@ const cors = (request, env) => {
     "Access-Control-Allow-Headers": "Content-Type,Authorization",
     "Access-Control-Max-Age": "86400"
   };
-  if (origin && env.FRONTEND_ORIGIN && origin === env.FRONTEND_ORIGIN) {
+  const requestOrigin = new URL(request.url).origin;
+  const configuredOrigins = String(env.FRONTEND_ORIGIN || "")
+    .split(",").map(value => value.trim()).filter(Boolean);
+  // Permit same-origin requests plus only explicitly configured cross-origin frontends.
+  if (origin && (origin === requestOrigin || configuredOrigins.includes(origin))) {
     headers["Access-Control-Allow-Origin"] = origin;
     headers["Access-Control-Allow-Credentials"] = "true";
   }
@@ -113,6 +117,30 @@ async function requireAdmin(request,env) {
 async function audit(env, actor, action, details={}) {
   try { await rest(env,"audit_logs","",{method:"POST",headers:{Prefer:"return=minimal"},body:JSON.stringify({actor_id:actor,action,details})}); } catch {}
 }
+async function getMaintenanceStatus(env) {
+  const rows = await rest(env,"settings","key=in.(maintenanceEnabled,maintenanceReason,maintenanceReopenAt)&select=key,value");
+  const cfg = Object.fromEntries((rows || []).map(row => [row.key,row.value]));
+  const enabledValue = String(cfg.maintenanceEnabled ?? "false").trim().toLowerCase();
+  const reopenAt = String(cfg.maintenanceReopenAt ?? "").trim();
+  let enabled = ["true","1","yes","on"].includes(enabledValue);
+  if (enabled && reopenAt) {
+    const reopenTime = Date.parse(reopenAt);
+    // Invalid dates do not accidentally disable maintenance.
+    if (Number.isFinite(reopenTime) && reopenTime <= Date.now()) enabled = false;
+  }
+  return {
+    enabled,
+    reason: String(cfg.maintenanceReason ?? "Sistem sedang dalam pemeliharaan.").trim() || "Sistem sedang dalam pemeliharaan.",
+    reopenAt
+  };
+}
+async function ensureMaintenanceOff(env) {
+  const status = await getMaintenanceStatus(env);
+  if (status.enabled) {
+    const suffix = status.reopenAt ? " Dibuka kembali: " + status.reopenAt + "." : "";
+    throw Object.assign(new Error(status.reason + suffix), {status:503});
+  }
+}
 async function handle(request,env) {
   const url=new URL(request.url); let path=url.pathname; const method=request.method;
   const aliases={"/api/auth/login":"/api/login","/api/auth/register":"/api/register","/api/auth/logout":"/api/logout","/api/tasks":"/api/jobs","/api/submissions/mine":"/api/history","/api/wallet":"/api/wallet"}; path=aliases[path]||path;
@@ -121,6 +149,16 @@ async function handle(request,env) {
   if(!path.startsWith("/api/")) return env.ASSETS ? env.ASSETS.fetch(request) : new Response("Not found",{status:404});
   if(!env.SUPABASE_URL||!env.SUPABASE_SERVICE_ROLE_KEY) return fail("Supabase belum dikonfigurasi di Cloudflare Worker",503,cors(request,env));
   try {
+    if(path==="/api/maintenance"&&method==="GET") {
+      return reply(await getMaintenanceStatus(env),200,cors(request,env));
+    }
+    if(method==="POST" && (
+      path==="/api/withdrawals" ||
+      path==="/api/robux" ||
+      (path.startsWith("/api/jobs/") && path.endsWith("/submit"))
+    )) {
+      await ensureMaintenanceOff(env);
+    }
     if((path==="/api/register"||path==="/api/auth/register")&&method==="POST") {
       const b=await body(request), username=String(b.username||"").trim(), password=String(b.password||"");
       if(!usernameOK(username)) return fail("Username harus 3–24 karakter (huruf, angka, underscore)");
@@ -315,7 +353,10 @@ try {
       status,
       error: String(e?.message || "Unknown error").slice(0, 500)
     });
-    const publicMessage=status===500?"Terjadi kesalahan server. Periksa konfigurasi Supabase dan skema tabel.":String(e?.message||"Permintaan gagal").slice(0,300);
+    // Show useful upstream RPC/PostgREST errors; never return request bodies or secrets.
+    const publicMessage = e?.message
+      ? String(e.message).slice(0,300)
+      : (status===500 ? "Terjadi kesalahan server. Periksa konfigurasi Supabase dan skema tabel." : "Permintaan gagal");
     return reply({error:publicMessage},status,cors(request,env));
   }
 }
