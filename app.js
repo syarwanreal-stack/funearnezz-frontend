@@ -23,6 +23,21 @@ function notify(message) {
   const el = $("#toast"); el.textContent = message; el.classList.add("show");
   clearTimeout(toastTimer); toastTimer = setTimeout(() => el.classList.remove("show"), 3200);
 }
+function showSuccessModal(message) {
+  let dialog = $("#successDialog");
+  if (!dialog) {
+    dialog = document.createElement("dialog");
+    dialog.id = "successDialog";
+    dialog.style.cssText = "border:1px solid #35405d;border-radius:18px;background:#11182b;color:#fff;padding:28px;max-width:90vw;text-align:center";
+    dialog.innerHTML = '<h3>Berhasil</h3><p id="successDialogMessage"></p><button id="successDialogOk" class="button button-primary" type="button">OK</button>';
+    document.body.appendChild(dialog);
+    dialog.addEventListener("click", e => { if (e.target === dialog || e.target.id === "successDialogOk") dialog.close(); });
+  }
+  $("#successDialogMessage").textContent = message;
+  if (!dialog.open) dialog.showModal();
+  clearTimeout(dialog._autoCloseTimer);
+  dialog._autoCloseTimer = setTimeout(() => { if (dialog.open) dialog.close(); }, 3000);
+}
 function setNotice(message = "", type = "info") {
   const el = $("#notice");
   if (!message) { el.className = "notice hidden"; el.textContent = ""; return; }
@@ -189,6 +204,7 @@ async function renderAdmin() {
         <label class="field">Judul tugas<input name="title" maxlength="160" required></label>
         <label class="field">Deskripsi<textarea name="description" maxlength="4000" rows="3"></textarea></label>
         <label class="field">Reward (Rp)<input name="reward" type="number" min="0" step="1" required></label>
+        <label class="field"><span><input name="photo_required" type="checkbox" style="width:auto;margin-right:8px">Wajib foto bukti</span></label>
         <div id="adminJobError" class="form-error hidden" role="alert"></div>
         <button class="button button-primary" type="submit">Buat tugas</button>
       </form>
@@ -202,6 +218,9 @@ async function renderAdmin() {
         <label class="field">Minimal Robux<input name="robuxMin" type="number" min="1" step="1" value="${escapeHTML(cfg.robuxMin ?? 10)}" required></label>
         <label class="field">Tarif Game Pass per Robux (Rp)<input name="gamepassRate" type="number" min="1" step="1" value="${escapeHTML(cfg.gamepassRate ?? 170)}" required></label>
         <label class="field">Tarif Username per Robux (Rp)<input name="usernameRate" type="number" min="1" step="1" value="${escapeHTML(cfg.usernameRate ?? 230)}" required></label>
+        <label class="field"><span><input name="maintenanceEnabled" type="checkbox" style="width:auto;margin-right:8px" ${String(cfg.maintenanceEnabled ?? false) === "true" ? "checked" : ""}>Aktifkan maintenance</span></label>
+        <label class="field">Alasan maintenance<input name="maintenanceReason" maxlength="300" value="${escapeHTML(cfg.maintenanceReason ?? "Sistem sedang dalam pemeliharaan.")}"></label>
+        <label class="field">Dibuka kembali (opsional)<input name="maintenanceReopenAt" type="datetime-local" value="${escapeHTML(cfg.maintenanceReopenAt ?? "")}"></label>
         <div id="adminSettingsError" class="form-error hidden" role="alert"></div>
         <button class="button button-primary" type="submit">Simpan pengaturan</button>
       </form>`;
@@ -218,7 +237,7 @@ async function submitRobux(event) {
   err.classList.add("hidden"); button.disabled=true; button.textContent="Mengirim…";
   try {
     const result=await api("/api/robux",{method:"POST",body:JSON.stringify(payload)});
-    notify(result.message || "Permintaan Robux dikirim.");
+    showSuccessModal("Penarikan diterima, admin akan segera memprosesnya.");
     await loadDashboard(); renderView("submissions");
   } catch(error) { err.textContent=getMessage(error); err.classList.remove("hidden"); }
   finally { button.disabled=false; button.textContent="Ajukan penukaran →"; }
@@ -228,7 +247,7 @@ async function submitAdminJob(event) {
   const form=event.currentTarget, err=$("#adminJobError"), button=form.querySelector('button[type="submit"]');
   err.classList.add("hidden"); button.disabled=true;
   try {
-    await api("/api/admin/jobs",{method:"POST",body:JSON.stringify({title:form.elements.title.value.trim(),description:form.elements.description.value.trim(),reward:Number(form.elements.reward.value)})});
+    await api("/api/admin/jobs",{method:"POST",body:JSON.stringify({title:form.elements.title.value.trim(),description:form.elements.description.value.trim(),reward:Number(form.elements.reward.value),photo_required:form.elements.photo_required.checked})});
     notify("Tugas berhasil dibuat."); await renderAdmin();
   } catch(error) { err.textContent=getMessage(error); err.classList.remove("hidden"); }
   finally { button.disabled=false; }
@@ -236,7 +255,7 @@ async function submitAdminJob(event) {
 async function saveAdminSettings(event) {
   event.preventDefault(); if(state.user?.role!=="admin") return;
   const form=event.currentTarget, err=$("#adminSettingsError"), button=form.querySelector('button[type="submit"]');
-  const values={robuxMin:Number(form.elements.robuxMin.value),gamepassRate:Number(form.elements.gamepassRate.value),usernameRate:Number(form.elements.usernameRate.value)};
+  const values={robuxMin:Number(form.elements.robuxMin.value),gamepassRate:Number(form.elements.gamepassRate.value),usernameRate:Number(form.elements.usernameRate.value),maintenanceEnabled:form.elements.maintenanceEnabled.checked,maintenanceReason:form.elements.maintenanceReason.value.trim(),maintenanceReopenAt:form.elements.maintenanceReopenAt.value};
   if(Object.values(values).some(value=>!Number.isSafeInteger(value)||value<1)){err.textContent="Semua nilai harus bilangan bulat positif.";err.classList.remove("hidden");return;}
   err.classList.add("hidden");button.disabled=true;
   try { await api("/api/admin/settings",{method:"POST",body:JSON.stringify(values)}); notify("Pengaturan berhasil disimpan."); await renderAdmin(); }
@@ -361,13 +380,7 @@ async function onAuthSubmit(event) {
     const result = await api(registering ? "/api/auth/register" : "/api/auth/login", { method:"POST", body:JSON.stringify(payload) });
     // Cookie sesi dikelola server sebagai HttpOnly dan tidak disimpan di JavaScript.
     saveToken(null);
-    if (registering) {
-      closeAuth(); $("#authForm").reset();
-      notify("Akun berhasil dibuat. Silakan masuk.");
-      openAuth("login");
-      return;
-    }
-    if (!result.user) throw new Error("Respons login tidak menyertakan data akun.");
+    if (!result.user) throw new Error("Respons autentikasi tidak menyertakan data akun.");
     state.user = result.user;
     document.body.classList.add("authenticated");
     closeAuth(); $("#authForm").reset(); notify(registering ? "Pendaftaran berhasil." : "Login berhasil.");
@@ -386,7 +399,7 @@ async function submitProof(taskId) {
   const existing = $("#proofDialog");
   if (existing) existing.remove();
   const dialog = document.createElement("dialog"); dialog.id = "proofDialog"; dialog.className = "modal";
-  dialog.innerHTML = `<form id="proofForm" class="modal-card"><button type="button" class="modal-close" id="closeProof" aria-label="Tutup">×</button><div class="modal-logo">F<span>+</span></div><div class="eyebrow">TASK SUBMISSION</div><h2>Kirim bukti tugas</h2><p>${escapeHTML(task.title || task.name || "Tugas")}</p><label class="field">Gambar bukti<input name="proof" type="file" accept="image/*" required><span class="field-hint">Maksimum dan jenis file harus mengikuti batas backend.</span></label><label class="field">Catatan (opsional)<textarea name="note" maxlength="1000" placeholder="Tambahkan penjelasan singkat"></textarea></label><div id="proofError" class="form-error hidden" role="alert"></div><button class="button button-primary button-large full-width" type="submit">Kirim untuk diperiksa →</button></form>`;
+  dialog.innerHTML = `<form id="proofForm" class="modal-card"><button type="button" class="modal-close" id="closeProof" aria-label="Tutup">×</button><div class="modal-logo">F<span>+</span></div><div class="eyebrow">TASK SUBMISSION</div><h2>Kirim bukti tugas</h2><p>${escapeHTML(task.title || task.name || "Tugas")}</p><label class="field">Gambar bukti<input name="proof" type="file" accept="image/jpeg,image/png,image/webp" ${task.photo_required ? "required" : ""}><span class="field-hint">${task.photo_required ? "Foto wajib untuk tugas ini." : "Foto opsional untuk tugas ini."} Maksimum 5 MB.</span></label><label class="field">Catatan (opsional)<textarea name="note" maxlength="1000" placeholder="Tambahkan penjelasan singkat"></textarea></label><div id="proofError" class="form-error hidden" role="alert"></div><button class="button button-primary button-large full-width" type="submit">Kirim untuk diperiksa →</button></form>`;
   document.body.appendChild(dialog); dialog.showModal();
   $("#closeProof").onclick = () => dialog.close();
   $("#proofForm").onsubmit = async event => {
@@ -413,7 +426,8 @@ async function submitWithdrawal(event) {
   button.disabled = true; button.textContent = "Mengirim…";
   try {
     await api("/api/withdrawals", { method:"POST", body:JSON.stringify({ method, amount, destination }) });
-    notify("Pengajuan penarikan dikirim."); await loadDashboard(); renderView("submissions");
+    showSuccessModal("Penarikan diterima, admin akan segera memprosesnya.");
+    await loadDashboard(); renderView("submissions");
   } catch (error) { err.textContent = getMessage(error); err.classList.remove("hidden"); }
   finally { button.disabled = false; button.textContent = "Kirim pengajuan penarikan →"; }
 }
