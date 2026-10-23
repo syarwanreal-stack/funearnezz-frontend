@@ -36,6 +36,7 @@ test("frontend includes clear dialogs and the required user workflows", async ()
   assert.doesNotMatch(app, /\$\('\[data-(?:proof-id|job-review)\]'\)\.forEach/);
   assert.match(app, /\$\$\('\[data-proof-id\]'\)\.forEach/);
   assert.match(app, /\$\$\('\[data-job-review\]'\)\.forEach/);
+  assert.match(app, /var \$\$ = function \(selector, root\).*querySelectorAll/);
 });
 
 test("worker has authenticated chat moderation, code redemption and combined queue support routes", async () => {
