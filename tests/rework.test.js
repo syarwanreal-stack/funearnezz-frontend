@@ -33,7 +33,7 @@ test("frontend includes clear dialogs and the required user workflows", async ()
     assert.ok(app.includes(text), "missing expected UX behavior: " + text);
   }
   assert.doesNotMatch(app, /form\.method\.value/);
-  assert.doesNotMatch(app, /\$\('\[data-(?:proof-id|job-review)\]'\)\.forEach/);
+  assert.doesNotMatch(app, /(^|[^$])\$\('\[data-(?:proof-id|job-review)\]'\)\.forEach/);
   assert.match(app, /\$\$\('\[data-proof-id\]'\)\.forEach/);
   assert.match(app, /\$\$\('\[data-job-review\]'\)\.forEach/);
   assert.match(app, /var \$\$ = function \(selector, root\).*querySelectorAll/);
