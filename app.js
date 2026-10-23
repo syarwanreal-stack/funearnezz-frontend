@@ -404,6 +404,8 @@
     });
   };
   var renderChat = async function () {
+    clearInterval(state.chatTimer);
+    state.chatTimer = null;
     var rows = await api('/api/chat');
     $('#viewRoot').innerHTML = '<section class="panel chat-panel"><div class="panel-heading"><div><h2>Global Chat</h2><p>Jangan spam, promosi, atau membagikan informasi pribadi.</p></div><button id="chatRefresh" class="button button-soft" type="button">Perbarui</button></div><div id="chatMessages" class="chat-messages">' + chatHtml(rows) + '</div><form id="chatForm" class="chat-send"><input name="message" maxlength="1000" autocomplete="off" placeholder="Tulis pesan..." required><button class="button button-primary" type="submit">Kirim</button></form><p class="hint">Perintah mute hanya untuk admin/staff: /mute @username 7 atau /unmute @username</p></section>';
     $('#chatRefresh').addEventListener('click', async function () { try { await renderChat(); say('Chat diperbarui.'); } catch (e) { showDialog('Chat gagal dimuat', e.message, { kind: 'error' }); } });
