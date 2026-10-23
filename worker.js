@@ -409,9 +409,9 @@ try {
     if(path==="/api/admin/jobs"&&method==="GET") {await requireAdmin(request,env);return reply(await rest(env,"jobs","select=*&order=created_at.desc"),200,cors(request,env));}
     if(path==="/api/admin/jobs"&&method==="POST") {
       const s=await requireAdmin(request,env),b=await body(request);
-      const quota=Number(b.quota);
+      const quota=(b.quota===undefined||b.quota===null||b.quota==="")?null:Number(b.quota);
       if(!String(b.title||"").trim()||!Number.isSafeInteger(Number(b.reward))||Number(b.reward)<0) return fail("Nama job wajib diisi dan reward harus berupa angka bulat nol atau lebih.",400,cors(request,env));
-      if(!Number.isSafeInteger(quota)||quota<1||quota>1000000) return fail("Kuota harus berupa angka bulat antara 1 dan 1.000.000.",400,cors(request,env));
+      if(quota!==null&&(!Number.isSafeInteger(quota)||quota<1||quota>1000000)) return fail("Kuota harus berupa angka bulat antara 1 dan 1.000.000.",400,cors(request,env));
       const link=String(b.link||"").trim().slice(0,1000);
       if(link) { try { const u=new URL(link); if(!["http:","https:"].includes(u.protocol)) return fail("Link job harus memakai HTTP atau HTTPS.",400,cors(request,env)); } catch { return fail("Format link job tidak valid.",400,cors(request,env)); } }
       const rows=await rest(env,"jobs","",{method:"POST",headers:{Prefer:"return=representation"},body:JSON.stringify({
