@@ -169,7 +169,9 @@ try {
 
   if (!existing.length) throw profileError;
         }
-      return reply({ok:true,message:"Akun berhasil dibuat. Silakan login."},201,cors(request,env));
+      const signedIn = await sb(env,"/auth/v1/token?grant_type=password",{method:"POST",body:JSON.stringify({email:emailFor(username),password})});
+      const createdProfile = (await rest(env,"profiles","id=eq."+encodeURIComponent(created.id)+"&select=*"))[0];
+      return reply({ok:true,message:"Akun berhasil dibuat.",user:safeProfile(createdProfile)},201,{...cors(request,env),"Set-Cookie":cookie(signedIn.access_token,Math.min(86400,Math.max(60,Number(signedIn.expires_in)||3600)))});
     }
     if((path==="/api/login"||path==="/api/auth/login")&&method==="POST") {
       const b=await body(request), username=String(b.username||"").trim(), password=String(b.password||"");
@@ -198,17 +200,20 @@ try {
     m=path.match(/^\/api\/jobs\/([^/]+)\/submit$/);
     if(m&&method==="POST") {
       const s=await requireUser(request,env), b=await body(request);
-      const job=(await rest(env,"jobs","id=eq."+encodeURIComponent(m[1])+"&status=eq.active&select=id,reward"))[0];
+      const job=(await rest(env,"jobs","id=eq."+encodeURIComponent(m[1])+"&status=eq.active&select=id,reward,photo_required"))[0];
       if(!job) return fail("Tugas tidak tersedia",404,cors(request,env));
       const file=b.proof;
-      if (!file || typeof file.arrayBuffer!=="function" || !Number.isFinite(file.size)) return fail("Pilih gambar bukti yang valid.",400,cors(request,env));
-      if (file.size<1 || file.size>5*1024*1024) return fail("Ukuran gambar maksimal 5 MB.",413,cors(request,env));
-      const mime=String(file.type||"").toLowerCase();
-      const ext=({"image/jpeg":"jpg","image/png":"png","image/webp":"webp"})[mime];
-      if (!ext) return fail("Format gambar yang didukung: JPG, PNG, atau WEBP.",415,cors(request,env));
-      const proofPath=s.user.id+"/"+crypto.randomUUID()+"."+ext;
-      const encodedPath=proofPath.split("/").map(encodeURIComponent).join("/");
-      await sb(env,"/storage/v1/object/submission-proofs/"+encodedPath,{method:"POST",headers:{"Content-Type":mime,"x-upsert":"false"},body:await file.arrayBuffer()});
+      let proofPath=null;
+      if(file && typeof file.arrayBuffer==="function" && Number.isFinite(file.size) && file.size>0) {
+        if(file.size>5*1024*1024) return fail("Ukuran gambar maksimal 5 MB.",413,cors(request,env));
+        const mime=String(file.type||"").toLowerCase();
+        const ext=({"image/jpeg":"jpg","image/png":"png","image/webp":"webp"})[mime];
+        if(!ext) return fail("Format gambar yang didukung: JPG, PNG, atau WEBP.",415,cors(request,env));
+        proofPath=s.user.id+"/"+crypto.randomUUID()+"."+ext;
+        const encodedPath=proofPath.split("/").map(encodeURIComponent).join("/");
+        await sb(env,"/storage/v1/object/submission-proofs/"+encodedPath,{method:"POST",headers:{"Content-Type":mime,"x-upsert":"false"},body:await file.arrayBuffer()});
+      }
+      if(job.photo_required && !proofPath) return fail("Tugas ini mewajibkan foto bukti.",400,cors(request,env));
       const rows=await rest(env,"submissions","",{method:"POST",headers:{Prefer:"return=representation"},body:JSON.stringify({user_id:s.user.id,job_id:job.id,note:String(b.note||"").slice(0,2000),proof_url:proofPath,status:"pending"})});
       return reply({ok:true,submission:rows?.[0]},201,cors(request,env));
     }
@@ -270,7 +275,7 @@ try {
       return reply({users:users.length,jobs:jobs.length,pending_submissions:subs.length,pending_withdrawals:withdrawals.length,pending_robux:robux.length},200,cors(request,env));
     }
     if(path==="/api/admin/jobs"&&method==="GET") {await requireAdmin(request,env);return reply(await rest(env,"jobs","select=*&order=created_at.desc"),200,cors(request,env));}
-    if(path==="/api/admin/jobs"&&method==="POST") {const s=await requireAdmin(request,env),b=await body(request);if(!String(b.title||"").trim()||!Number.isFinite(Number(b.reward))||Number(b.reward)<0)return fail("Judul wajib diisi dan reward harus berupa angka nol atau lebih.",400,cors(request,env));const rows=await rest(env,"jobs","",{method:"POST",headers:{Prefer:"return=representation"},body:JSON.stringify({title:String(b.title).slice(0,160),description:String(b.description||"").slice(0,4000),reward:Number(b.reward),status:"active"})});await audit(env,s.user.id,"job.create",{title:b.title});return reply(rows?.[0]||{ok:true},201,cors(request,env));}
+    if(path==="/api/admin/jobs"&&method==="POST") {const s=await requireAdmin(request,env),b=await body(request);if(!String(b.title||"").trim()||!Number.isFinite(Number(b.reward))||Number(b.reward)<0)return fail("Judul wajib diisi dan reward harus berupa angka nol atau lebih.",400,cors(request,env));const rows=await rest(env,"jobs","",{method:"POST",headers:{Prefer:"return=representation"},body:JSON.stringify({title:String(b.title).slice(0,160),description:String(b.description||"").slice(0,4000),reward:Number(b.reward),photo_required:!!b.photo_required,status:"active"})});await audit(env,s.user.id,"job.create",{title:b.title});return reply(rows?.[0]||{ok:true},201,cors(request,env));}
     if(path==="/api/admin/submissions"&&method==="GET") {await requireAdmin(request,env);return reply(await rest(env,"submissions","select=*&order=created_at.desc"),200,cors(request,env));}
     if(path==="/api/admin/withdrawals"&&method==="GET") {await requireAdmin(request,env);return reply(await rest(env,"withdrawals","select=*&order=created_at.desc"),200,cors(request,env));}
     if(path==="/api/admin/robux"&&method==="GET") {await requireAdmin(request,env);return reply(await rest(env,"robux_requests","select=*&order=created_at.desc"),200,cors(request,env));}
@@ -296,7 +301,7 @@ try {
       await audit(env,s.user.id,"user.adjust_balance",{id:m[1],amount:delta});return reply({ok:true,result},200,cors(request,env));
     }
     if(path==="/api/admin/settings"&&method==="GET") {await requireAdmin(request,env);return reply(await rest(env,"settings","select=key,value&order=key.asc"),200,cors(request,env));}
-    if(path==="/api/admin/settings"&&method==="POST") {const s=await requireAdmin(request,env),b=await body(request);for(const [key,value] of Object.entries(b)){await rest(env,"settings","on_conflict=key",{method:"POST",headers:{Prefer:"resolution=merge-duplicates,return=minimal"},body:JSON.stringify({key:String(key).slice(0,100),value})});}await audit(env,s.user.id,"settings.update",{keys:Object.keys(b)});return reply({ok:true},200,cors(request,env));}
+    if(path==="/api/admin/settings"&&method==="POST") {const s=await requireAdmin(request,env),b=await body(request);const allowed=new Set(["robuxMin","gamepassRate","usernameRate","maintenanceEnabled","maintenanceReason","maintenanceReopenAt"]);for(const [key,value] of Object.entries(b)){if(!allowed.has(key))return fail("Kunci pengaturan tidak diizinkan: "+key,400,cors(request,env));await rest(env,"settings","on_conflict=key",{method:"POST",headers:{Prefer:"resolution=merge-duplicates,return=minimal"},body:JSON.stringify({key,value})});}await audit(env,s.user.id,"settings.update",{keys:Object.keys(b)});return reply({ok:true},200,cors(request,env));}
     return fail("Endpoint tidak ditemukan",404,cors(request,env));
   } catch(e) {
     let status=e.status||e.upstreamStatus||500;
