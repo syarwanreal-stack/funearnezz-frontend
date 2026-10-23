@@ -345,7 +345,7 @@
     var fee = numberSetting(config.danaFee, 2000);
     $('#viewRoot').innerHTML =
       '<section class="panel"><div class="panel-heading"><div><h2>Buat request</h2><p>Pilih jenis penarikan terlebih dahulu. Request akan masuk antrean admin.</p></div></div>' +
-      '<div class="withdraw-tabs" role="tablist" aria-label="Jenis penarikan"><button class="withdraw-tab active" id="tabRobux" type="button" role="tab" aria-selected="true" data-withdraw-tab="robux">ROBUX</button><button class="withdraw-tab" id="tabDana" type="button" role="tab" aria-selected="false" data-withdraw-tab="dana">DANA</button></div>' +
+      '<div class="withdraw-tabs" id="withdrawTabs" role="tablist" aria-label="Jenis penarikan"><span class="withdraw-tab-slider" aria-hidden="true"></span><button class="withdraw-tab active" id="tabRobux" type="button" role="tab" aria-selected="true" data-withdraw-tab="robux">ROBUX</button><button class="withdraw-tab" id="tabDana" type="button" role="tab" aria-selected="false" data-withdraw-tab="dana">DANA</button></div>' +
       '<form id="withdrawForm" class="form-grid">' +
       '<input id="withdrawType" name="type" type="hidden" value="robux">' +
       '<label class="field" id="danaAmountWrap" hidden><span>Nominal saldo yang dipotong (Rp)</span><input id="withdrawAmount" type="number" name="amount" min="1" step="1" placeholder="Contoh: 10000"></label>' +
@@ -364,6 +364,7 @@
       var method = $('#robuxMethod').value, count = Number($('#robuxCount').value || 0);
       $('#tabRobux').classList.toggle('active', type === 'robux');
       $('#tabDana').classList.toggle('active', type === 'dana');
+      $('#withdrawTabs').classList.toggle('is-dana', type === 'dana');
       $('#tabRobux').setAttribute('aria-selected', String(type === 'robux'));
       $('#tabDana').setAttribute('aria-selected', String(type === 'dana'));
       $('#danaAmountWrap').hidden = type !== 'dana';
