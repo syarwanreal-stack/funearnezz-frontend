@@ -83,6 +83,8 @@ test("multipart proof is validated, uploaded to private Storage, and its path is
   let uploadedPath = "";
   let savedSubmission;
   await withFetchStub(async (url, init) => {
+    // The maintenance guard checks settings before any user mutation.
+    if (url.pathname === "/rest/v1/settings") return json([]);
     if (url.pathname === "/auth/v1/user") return json({ id: "22222222-2222-4222-8222-222222222222" });
     if (url.pathname === "/rest/v1/profiles") return json([{
       id: "22222222-2222-4222-8222-222222222222", username: "member_1", role: "user",
@@ -110,6 +112,100 @@ test("multipart proof is validated, uploaded to private Storage, and its path is
     assert.match(uploadedPath, /submission-proofs\/22222222-2222-4222-8222-222222222222\//);
     assert.equal(savedSubmission.status, "pending");
     assert.match(savedSubmission.proof_url, /^22222222-2222-4222-8222-222222222222\/[0-9a-f-]+\.png$/i);
+  });
+});
+
+
+test("maintenance status endpoint reports reason and reopening time", async () => {
+  await withFetchStub(async url => {
+    if (url.pathname === "/rest/v1/settings") return json([
+      { key: "maintenanceEnabled", value: true },
+      { key: "maintenanceReason", value: "Sedang perbaikan" },
+      { key: "maintenanceReopenAt", value: "2099-01-01T00:00:00.000Z" },
+    ]);
+    return json({ message: "unexpected test request", path: url.pathname }, 500);
+  }, async () => {
+    const response = await worker.fetch(request("/api/maintenance"), {},);
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), {
+      enabled: true,
+      reason: "Sedang perbaikan",
+      reopenAt: "2099-01-01T00:00:00.000Z",
+    });
+  });
+});
+
+test("maintenance blocks user write requests before creating withdrawal requests", async () => {
+  let rpcCalled = false;
+  await withFetchStub(async url => {
+    if (url.pathname === "/rest/v1/settings") return json([
+      { key: "maintenanceEnabled", value: true },
+      { key: "maintenanceReason", value: "Maintenance aktif" },
+      { key: "maintenanceReopenAt", value: "" },
+    ]);
+    if (url.pathname.includes("/rpc/create_withdrawal")) rpcCalled = true;
+    return json({ message: "unexpected test request", path: url.pathname }, 500);
+  }, async () => {
+    const response = await worker.fetch(request("/api/withdrawals", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ method: "DANA", amount: 100, destination: "081234567890" }),
+    }), env);
+    assert.equal(response.status, 503);
+    assert.match((await response.json()).error, /Maintenance aktif/);
+    assert.equal(rpcCalled, false);
+  });
+});
+
+test("DANA withdrawal calls the queue RPC with validated fields", async () => {
+  let rpcBody;
+  await withFetchStub(async (url, init) => {
+    if (url.pathname === "/rest/v1/settings") return json([]);
+    if (url.pathname === "/auth/v1/user") return json({ id: "44444444-4444-4444-8444-444444444444" });
+    if (url.pathname === "/rest/v1/profiles") return json([{
+      id: "44444444-4444-4444-8444-444444444444", username: "member_2", role: "user",
+      balance: 1000, reserved_balance: 0, disabled: false,
+    }]);
+    if (url.pathname === "/rest/v1/rpc/create_withdrawal") {
+      rpcBody = JSON.parse(init.body);
+      return json({ id: 23, status: "pending", amount: 100, method: "DANA" });
+    }
+    return json({ message: "unexpected test request", path: url.pathname }, 500);
+  }, async () => {
+    const response = await worker.fetch(request("/api/withdrawals", {
+      method: "POST", headers: { Authorization: "Bearer member-access-token", "content-type": "application/json" },
+      body: JSON.stringify({ method: "DANA", amount: 100, destination: "081234567890" }),
+    }), env);
+    assert.equal(response.status, 201, await response.clone().text());
+    assert.equal(rpcBody.p_user_id, "44444444-4444-4444-8444-444444444444");
+    assert.equal(rpcBody.p_amount, 100);
+    assert.equal(rpcBody.p_method, "DANA");
+    assert.equal(rpcBody.p_destination, "081234567890");
+    assert.equal((await response.json()).result.status, "pending");
+  });
+});
+
+test("job creation includes the photo-required setting", async () => {
+  let savedJob;
+  await withFetchStub(async (url, init) => {
+    if (url.pathname === "/auth/v1/user") return json({ id: "55555555-5555-4555-8555-555555555555" });
+    if (url.pathname === "/rest/v1/profiles") return json([{
+      id: "55555555-5555-4555-8555-555555555555", username: "admin_2", role: "admin",
+      balance: 0, reserved_balance: 0, disabled: false,
+    }]);
+    if (url.pathname === "/rest/v1/jobs" && init.method === "POST") {
+      savedJob = JSON.parse(init.body);
+      return json([{ id: 81, ...savedJob }], 201);
+    }
+    if (url.pathname === "/rest/v1/audit_logs") return new Response(null, { status: 204 });
+    return json({ message: "unexpected test request", path: url.pathname }, 500);
+  }, async () => {
+    const response = await worker.fetch(request("/api/admin/jobs", {
+      method: "POST", headers: { Authorization: "Bearer admin-access-token", "content-type": "application/json" },
+      body: JSON.stringify({ title: "Test task", description: "Desc", reward: 50, photo_required: true }),
+    }), env);
+    assert.equal(response.status, 201, await response.clone().text());
+    assert.equal(savedJob.photo_required, true);
+    assert.equal(savedJob.status, "active");
   });
 });
 
