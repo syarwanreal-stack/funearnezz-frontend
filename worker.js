@@ -205,7 +205,11 @@ try {
     "id=eq." + encodeURIComponent(created.id) + "&select=id,username"
   ).catch(() => []);
 
-  if (!existing.length) throw profileError;
+  if (!existing.length) {
+    // Avoid leaving an Auth-only account behind when profile creation genuinely failed.
+    await sbAdmin(env,"/auth/v1/admin/users/" + encodeURIComponent(created.id),{method:"DELETE"}).catch(() => {});
+    throw profileError;
+  }
         }
       const signedIn = await sb(env,"/auth/v1/token?grant_type=password",{method:"POST",body:JSON.stringify({email:emailFor(username),password})});
       const createdProfile = (await rest(env,"profiles","id=eq."+encodeURIComponent(created.id)+"&select=*"))[0];
