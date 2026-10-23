@@ -383,7 +383,7 @@
         $('#withdrawCalc').textContent = 'Tarif ' + cash(rate) + ' per Robux. ' + count + ' Robux akan memotong saldo ' + cash(cost) + '. Minimal ' + numberSetting(config.robuxMin, 10) + ' Robux.';
       }
     };
-    $('[data-withdraw-tab]').forEach(function (tab) {
+    $$('[data-withdraw-tab]').forEach(function (tab) {
       tab.addEventListener('click', function () {
         $('#withdrawType').value = tab.dataset.withdrawTab;
         updateCalc();
