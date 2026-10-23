@@ -222,25 +222,25 @@ test("Robux exchange creates a pending request through its dedicated RPC", async
     if (url.pathname === "/auth/v1/user") return json({ id: "66666666-6666-4666-8666-666666666666" });
     if (url.pathname === "/rest/v1/profiles") return json([{
       id: "66666666-6666-4666-8666-666666666666", username: "member_3", role: "user",
-      balance: 1000, reserved_balance: 0, disabled: false,
+      balance: 5000, reserved_balance: 0, disabled: false,
     }]);
     if (url.pathname === "/rest/v1/rpc/create_robux_request") {
       rpcBody = JSON.parse(init.body);
-      return json({ id: 24, status: "pending", method: "username", robux: 2, cost: 460 });
+      return json({ id: 24, status: "pending", method: "username", robux: 10, cost: 2300 });
     }
     if (url.pathname === "/rest/v1/audit_logs") return new Response(null, { status: 204 });
     return json({ message: "unexpected test request", path: url.pathname }, 500);
   }, async () => {
     const response = await worker.fetch(request("/api/robux", {
       method: "POST", headers: { Authorization: "Bearer member-access-token", "content-type": "application/json" },
-      body: JSON.stringify({ method: "username", robux: 2, username: "test_roblox" }),
+      body: JSON.stringify({ method: "username", robux: 10, username: "test_roblox" }),
     }), env);
     assert.equal(response.status, 201, await response.clone().text());
     assert.equal(rpcBody.p_user_id, "66666666-6666-4666-8666-666666666666");
     assert.equal(rpcBody.p_method, "username");
-    assert.equal(rpcBody.p_robux, 2);
+    assert.equal(rpcBody.p_robux, 10);
     assert.equal(rpcBody.p_username, "test_roblox");
-    assert.equal(rpcBody.p_cost, 460);
+    assert.equal(rpcBody.p_cost, 2300);
     assert.equal((await response.json()).request.status, "pending");
   });
 });
