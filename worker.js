@@ -446,8 +446,28 @@ try {
       const result=await sb(env,"/rest/v1/rpc/admin_adjust_balance",{method:"POST",body:JSON.stringify({p_user_id:m[1],p_amount:delta,p_reason:String(b.reason||"Admin adjustment").slice(0,200)})});
       await audit(env,s.user.id,"user.adjust_balance",{id:m[1],amount:delta});return reply({ok:true,result},200,cors(request,env));
     }
-    if(path==="/api/admin/settings"&&method==="GET") {await requireAdmin(request,env);return reply(await rest(env,"settings","select=key,value&order=key.asc"),200,cors(request,env));}
-    if(path==="/api/admin/settings"&&method==="POST") {const s=await requireAdmin(request,env),b=await body(request);const allowed=new Set(["robuxMin","gamepassRate","usernameRate","danaFee","maintenanceEnabled","maintenanceReason","maintenanceReopenAt","announcementEnabled","announcementTitle","announcementMessage","announcementUpdatedAt"]);for(const [key,value] of Object.entries(b)){if(!allowed.has(key))return fail("Kunci pengaturan tidak diizinkan: "+key,400,cors(request,env));await rest(env,"settings","on_conflict=key",{method:"POST",headers:{Prefer:"resolution=merge-duplicates,return=minimal"},body:JSON.stringify({key,value})});}await audit(env,s.user.id,"settings.update",{keys:Object.keys(b)});return reply({ok:true},200,cors(request,env));}
+    if(path==="/api/admin/settings"&&method==="GET") {
+      await requireAdmin(request,env);
+      return reply(await rest(env,"settings","select=key,value&order=key.asc"),200,cors(request,env));
+    }
+    if(path==="/api/admin/settings"&&method==="POST") {
+      const s=await requireAdmin(request,env),b=await body(request);
+      const allowed=new Set(["robuxMin","gamepassRate","usernameRate","danaFee","maintenanceEnabled","maintenanceReason","maintenanceReopenAt","announcementEnabled","announcementTitle","announcementMessage","announcementUpdatedAt"]);
+      for(const [key,value] of Object.entries(b)) {
+        if(!allowed.has(key)) return fail("Kunci pengaturan tidak diizinkan: "+key,400,cors(request,env));
+        if(["robuxMin","gamepassRate","usernameRate","danaFee"].includes(key)) {
+          const n=Number(value);
+          if(!Number.isSafeInteger(n)||n<0||n>1000000000||(key==="robuxMin"&&n<1)||(key!=="danaFee"&&key!=="robuxMin"&&n<1)) return fail("Nilai pengaturan "+key+" tidak valid.",400,cors(request,env));
+        }
+        if(["maintenanceEnabled","announcementEnabled"].includes(key)&&typeof value!=="boolean") return fail("Status "+key+" harus berupa boolean.",400,cors(request,env));
+        const maxLength={maintenanceReason:1000,announcementTitle:120,announcementMessage:2000,maintenanceReopenAt:80,announcementUpdatedAt:80}[key];
+        if(maxLength&&typeof value!=="string") return fail("Nilai "+key+" harus berupa teks.",400,cors(request,env));
+        if(maxLength&&value.length>maxLength) return fail("Nilai "+key+" terlalu panjang.",400,cors(request,env));
+        await rest(env,"settings","on_conflict=key",{method:"POST",headers:{Prefer:"resolution=merge-duplicates,return=minimal"},body:JSON.stringify({key,value})});
+      }
+      await audit(env,s.user.id,"settings.update",{keys:Object.keys(b)});
+      return reply({ok:true},200,cors(request,env));
+    }
     return fail("Endpoint tidak ditemukan",404,cors(request,env));
   } catch(e) {
     let status=e.status||e.upstreamStatus||500;
