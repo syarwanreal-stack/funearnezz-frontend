@@ -558,7 +558,7 @@
         '</article>';
     }).join('');
     $('#viewRoot').innerHTML = '<section class="panel"><div class="panel-heading"><div><h2>Pengajuan job</h2><p>Reward masuk setelah pengajuan disetujui. Penolakan butuh alasan dan membebaskan satu kuota job.</p></div></div><div class="stack">' + (html || '<div class="empty-state">Belum ada pengajuan job.</div>') + '</div></section>';
-    $('[data-proof-id]').forEach(function (button) {
+    $$('[data-proof-id]').forEach(function (button) {
       button.addEventListener('click', async function () {
         button.disabled = true;
         try {
@@ -572,7 +572,7 @@
         finally { button.disabled = false; }
       });
     });
-    $('[data-job-review]').forEach(function (button) {
+    $$('[data-job-review]').forEach(function (button) {
       button.addEventListener('click', function () {
         var id = button.dataset.id;
         if (button.dataset.jobReview === 'reject') {
