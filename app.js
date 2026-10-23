@@ -368,7 +368,7 @@
           await api('/api/withdrawals', { method: 'POST', body: JSON.stringify({ method: 'DANA', amount: amount, destination: form.destination.value.trim() }) });
         } else {
           var robux = Number(form.robux.value);
-          var methodName = form.method.value;
+          var methodName = form.elements.namedItem('method').value;
           var uname = form.robloxUsername.value.trim();
           var url = form.gamepassUrl.value.trim();
           if (!Number.isSafeInteger(robux) || robux < numberSetting(config.robuxMin, 10)) throw new Error('Jumlah Robux di bawah batas minimum.');
@@ -652,6 +652,7 @@
   };
   var boot = async function () {
     await applyMaintenance();
+    setInterval(applyMaintenance, 30000);
     try {
       var result = await api('/api/me');
       await setLoggedIn(result.user);
