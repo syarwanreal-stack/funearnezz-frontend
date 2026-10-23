@@ -45,7 +45,8 @@ test("worker has authenticated chat moderation, code redemption and combined que
     "requireStaff(request,env)",
     "Alasan penolakan wajib diisi.",
     'path==="/api/withdrawals"&&method==="GET"',
-    "announcementUpdatedAt"
+    "announcementUpdatedAt",
+    "Promosi, tautan undangan, dan iklan tidak diperbolehkan di Global Chat."
   ]) assert.ok(worker.includes(phrase), "missing API contract " + phrase);
 });
 
