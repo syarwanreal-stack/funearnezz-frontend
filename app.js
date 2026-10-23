@@ -2,7 +2,7 @@
 (function () {
   var $ = function (selector, root) { return (root || document).querySelector(selector); };
   var $$ = function (selector, root) { return Array.prototype.slice.call((root || document).querySelectorAll(selector)); };
-  var state = { user: null, view: 'dashboard', config: {}, data: {}, maintenance: null, dialogTimer: null, pendingCount: 0, notificationReady: false, pollTimer: null, chatTimer: null };
+  var state = { user: null, view: 'dashboard', config: {}, data: {}, maintenance: null, dialogTimer: null, pendingCount: null, notificationReady: false, pollTimer: null, chatTimer: null };
   var viewMeta = {
     dashboard: ['RUANG KAMU', 'Dashboard', 'Pantau saldo dan tugas yang tersedia.'],
     history: ['AKTIVITAS', 'Riwayat', 'Catatan saldo masuk, saldo keluar, dan status pengajuan.'],
@@ -698,7 +698,7 @@
       try {
         var r = await Promise.all([api('/api/admin/withdrawals'), api('/api/admin/robux')]);
         var count = (r[0] || []).filter(function (x) { return x.status === 'pending'; }).length + (r[1] || []).filter(function (x) { return x.status === 'pending'; }).length;
-        if (state.pendingCount && count > state.pendingCount && state.notificationReady && 'Notification' in window) new Notification('Request withdraw baru', { body: 'Ada ' + (count - state.pendingCount) + ' request baru di antrean.' });
+        if (state.pendingCount !== null && count > state.pendingCount && state.notificationReady && 'Notification' in window) new Notification('Request withdraw baru', { body: 'Ada ' + (count - state.pendingCount) + ' request baru di antrean.' });
         state.pendingCount = count;
         $('#pendingBadge').textContent = String(count);
         $('#pendingBadge').classList.toggle('hidden', count === 0);
