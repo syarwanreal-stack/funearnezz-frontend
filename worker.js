@@ -314,7 +314,7 @@ try {
     }
     if(path==="/api/withdrawals"&&method==="POST") {
       const s=await requireUser(request,env), b=await body(request), amount=Number(b.amount);
-      if(!Number.isFinite(amount)||amount<=0||amount>Number(s.profile.balance||0)) return fail("Saldo tidak mencukupi atau jumlah tidak valid");
+      if(!Number.isSafeInteger(amount)||amount<=0||amount>Number(s.profile.balance||0)) return fail("Nominal penarikan harus berupa angka bulat positif dan tidak melebihi saldo.");
       const rows=await sb(env,"/rest/v1/rpc/create_withdrawal",{method:"POST",body:JSON.stringify({p_user_id:s.user.id,p_amount:amount,p_method:String(b.method||"").slice(0,50),p_destination:String(b.destination||"").slice(0,200)})});
       return reply({ok:true,result:rows},201,cors(request,env));
     }
