@@ -89,8 +89,14 @@
       var button = $('#promptSubmit');
       button.disabled = true;
       button.textContent = 'Mengirim…';
-      try { await callback(reason); closeDialog(); }
-      catch (error) { button.disabled = false; button.textContent = 'Kirim penolakan'; showDialog('Belum berhasil', error.message, { kind: 'error' }); }
+      try {
+        var outcome = await callback(reason);
+        closeDialog();
+        if (outcome && outcome.title) showDialog(outcome.title, outcome.message || 'Selesai.', outcome.options || { autoMs: 3000 });
+      } catch (error) {
+        button.disabled = false; button.textContent = 'Kirim penolakan';
+        showDialog('Belum berhasil', error.message, { kind: 'error' });
+      }
     });
   };
   var setAuthMode = function (mode) {
@@ -510,6 +516,7 @@
           showPrompt('Tolak request', 'Wajib isi alasan. Saldo yang ditahan akan dikembalikan setelah penolakan berhasil.', 'Contoh: Data tujuan tidak valid', async function (reason) {
             await reviewRequest(kind, id, false, reason);
             await navigate('requests');
+            return { title: 'Request ditolak', message: 'Alasan tersimpan dan saldo yang ditahan sudah dikembalikan.', options: { autoMs: 3000, kind: 'warning', icon: '×' } };
           });
         } else {
           showDialog('Konfirmasi penyelesaian', 'Pastikan Dana/Robux sudah benar-benar dikirim sebelum mengonfirmasi request ini.', { kind: 'warning', icon: '!' });
@@ -572,10 +579,12 @@
           showPrompt('Tolak pengajuan job', 'Isi alasan penolakan agar pengguna tahu apa yang perlu diperbaiki.', 'Jelaskan alasan penolakan', async function (reason) {
             await api('/api/admin/submissions/' + encodeURIComponent(id) + '/review', { method: 'POST', body: JSON.stringify({ status: 'rejected', note: reason }) });
             await navigate('review-jobs');
-            showDialog('Pengajuan ditolak', 'Alasan sudah disimpan dan satu kuota job dibebaskan.', { autoMs: 3000, kind: 'warning', icon: '×' });
+            return { title: 'Pengajuan ditolak', message: 'Alasan tersimpan dan satu kuota job dibebaskan.', options: { autoMs: 3000, kind: 'warning', icon: '×' } };
           });
         } else {
-          showDialog('Setujui pengajuan?', 'Saldo reward ' + cash((jobs[results[0].find(function (x) { return String(x.id) === String(id); }) || {}).reward || 0) + ' akan ditambahkan ke akun pengguna jika disetujui.', { kind: 'warning', icon: '!' });
+          var selected = (results[0] || []).find(function (x) { return String(x.id) === String(id); });
+          var selectedJob = selected ? jobs[selected.job_id] : null;
+          showDialog('Setujui pengajuan?', 'Saldo reward ' + cash(selectedJob ? selectedJob.reward : 0) + ' akan ditambahkan ke akun pengguna jika disetujui.', { kind: 'warning', icon: '!' });
           $('#dialogOk').textContent = 'Setujui reward';
           $('#dialogOk').className = 'button button-success';
           $('#dialogOk').addEventListener('click', async function acceptJob() {
