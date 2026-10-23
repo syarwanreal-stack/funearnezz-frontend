@@ -12,6 +12,7 @@
     requests: ['ANTREAN ADMIN', 'Request Withdraw', 'Request DANA dan Robux tampil bersama dalam satu antrean.'],
     codes: ['REWARD ADMIN', 'Create Unickcode', 'Buat kode saldo dengan batas jumlah penerima.'],
     'create-job': ['TUGAS ADMIN', 'Create Job', 'Buat tugas dengan reward, link, kuota, dan pengaturan bukti foto.'],
+    'review-jobs': ['ANTREAN JOB', 'Review Job', 'Periksa bukti kerja dan setujui reward atau tolak dengan alasan.'],
     'payout-settings': ['PENGATURAN ADMIN', 'Setting Penarikan', 'Atur tarif Robux dan biaya admin DANA.']
   };
   var cash = function (value) {
@@ -124,6 +125,7 @@
     $('#drawerRole').textContent = user.role === 'admin' ? 'Administrator' : user.role === 'staff' ? 'Staff' : 'Pengguna';
     $('#adminNav').classList.toggle('hidden', user.role !== 'admin');
     startRequestPolling();
+    applyMaintenance();
     return navigate('dashboard');
   };
   var getConfig = async function () {
@@ -147,8 +149,15 @@
       state.maintenance = data;
       if (data.enabled) {
         var suffix = data.reopenAt ? '\nPerkiraan dibuka kembali: ' + date(data.reopenAt) : '';
-        if ($('#dialogLayer').classList.contains('hidden') || !$('#dialogLayer .dialog-card h2') || $('#dialogLayer .dialog-card h2').textContent !== 'Website sedang maintenance') {
-          showDialog('Website sedang maintenance', (data.reason || 'Sistem sedang dalam pemeliharaan.') + suffix, { locked: true, kind: 'warning', icon: '⚙' });
+        var heading = $('#dialogLayer .dialog-card h2');
+        if (!state.user) {
+          if (heading && heading.textContent === 'Website sedang maintenance') closeDialog();
+        } else {
+          var locked = state.user.role !== 'admin';
+          if ($('#dialogLayer').classList.contains('hidden') || !heading || heading.textContent !== 'Website sedang maintenance' || $('#dialogLayer').dataset.maintenanceLocked !== String(locked)) {
+            showDialog('Website sedang maintenance', (data.reason || 'Sistem sedang dalam pemeliharaan.') + suffix, { locked: locked, kind: 'warning', icon: '⚙' });
+            $('#dialogLayer').dataset.maintenanceLocked = String(locked);
+          }
         }
       } else if ($('#dialogLayer .dialog-card h2') && $('#dialogLayer .dialog-card h2').textContent === 'Website sedang maintenance') closeDialog();
     } catch (e) {
@@ -199,6 +208,7 @@
       else if (view === 'requests') await renderRequests();
       else if (view === 'codes') await renderCodes();
       else if (view === 'create-job') renderCreateJob();
+      else if (view === 'review-jobs') await renderJobReviews();
       else if (view === 'payout-settings') renderPayoutSettings();
     } catch (error) {
       $('#viewRoot').innerHTML = '<div class="panel"><div class="empty-state"><b>Data belum dapat dimuat</b>' + esc(error.message) + '</div><button id="retryLoad" class="button button-outline" type="button">Coba lagi</button></div>';
@@ -523,6 +533,62 @@
     var route = kind === 'dana' ? 'withdrawals' : 'robux';
     var status = accept ? (kind === 'dana' ? 'paid' : 'completed') : 'rejected';
     await api('/api/admin/' + route + '/' + encodeURIComponent(id) + '/review', { method: 'POST', body: JSON.stringify({ status: status, note: note }) });
+  };
+  var renderJobReviews = async function () {
+    var results = await Promise.all([api('/api/admin/submissions'), api('/api/admin/users'), api('/api/admin/jobs')]);
+    var users = {}, jobs = {};
+    (results[1] || []).forEach(function (item) { users[item.id] = item.username || item.id; });
+    (results[2] || []).forEach(function (item) { jobs[item.id] = item; });
+    var submissions = (results[0] || []).slice().sort(function (a, b) { return new Date(b.created_at) - new Date(a.created_at); });
+    var html = submissions.map(function (item) {
+      var job = jobs[item.job_id] || {};
+      return '<article class="request-card"><div class="card-top"><div><h3>' + esc(job.title || ('Job #' + item.job_id)) + '</h3><p>@' + esc(users[item.user_id] || 'user') + ' · ' + esc(date(item.created_at)) + '</p></div>' + statusTag(item.status) + '</div>' +
+        '<div class="request-meta"><div><small>Reward job</small><strong>' + cash(job.reward || 0) + '</strong></div><div><small>Kuota terpakai</small><strong>' + esc(job.quota_used || 0) + '/' + esc(job.quota == null ? '∞' : job.quota) + '</strong></div></div>' +
+        (item.note ? '<p>' + esc(item.note) + '</p>' : '<p class="subtle">Tidak ada catatan dari pengguna.</p>') +
+        (item.proof_url ? '<div class="button-row"><button class="button button-outline" type="button" data-proof-id="' + esc(item.id) + '">Lihat foto bukti</button></div>' : '<p class="subtle">Foto bukti tidak dilampirkan.</p>') +
+        (item.review_note ? '<div class="inline-alert ' + (item.status === 'rejected' ? 'danger-alert' : '') + '">Catatan admin: ' + esc(item.review_note) + '</div>' : '') +
+        (item.status === 'pending' ? '<div class="button-row"><button class="button button-danger" type="button" data-job-review="reject" data-id="' + esc(item.id) + '">Tolak</button><button class="button button-success" type="button" data-job-review="accept" data-id="' + esc(item.id) + '">Setujui reward</button></div>' : '') +
+        '</article>';
+    }).join('');
+    $('#viewRoot').innerHTML = '<section class="panel"><div class="panel-heading"><div><h2>Pengajuan job</h2><p>Reward masuk setelah pengajuan disetujui. Penolakan butuh alasan dan membebaskan satu kuota job.</p></div></div><div class="stack">' + (html || '<div class="empty-state">Belum ada pengajuan job.</div>') + '</div></section>';
+    $('[data-proof-id]').forEach(function (button) {
+      button.addEventListener('click', async function () {
+        button.disabled = true;
+        try {
+          var proof = await api('/api/submissions/' + encodeURIComponent(button.dataset.proofId) + '/proof');
+          var layer = $('#dialogLayer');
+          closeDialog();
+          layer.innerHTML = '<section class="dialog-card" role="dialog" aria-modal="true"><h2 style="margin-bottom:12px">Foto bukti job</h2><img src="' + esc(proof.url) + '" alt="Foto bukti pengajuan" style="display:block;max-width:100%;max-height:65dvh;object-fit:contain;margin:0 auto;border-radius:12px"><div class="dialog-actions"><button id="proofOk" class="button button-primary" type="button">OK</button></div></section>';
+          layer.classList.remove('hidden');
+          $('#proofOk').addEventListener('click', closeDialog);
+        } catch (error) { showDialog('Bukti tidak dapat dibuka', error.message, { kind: 'error' }); }
+        finally { button.disabled = false; }
+      });
+    });
+    $('[data-job-review]').forEach(function (button) {
+      button.addEventListener('click', function () {
+        var id = button.dataset.id;
+        if (button.dataset.jobReview === 'reject') {
+          showPrompt('Tolak pengajuan job', 'Isi alasan penolakan agar pengguna tahu apa yang perlu diperbaiki.', 'Jelaskan alasan penolakan', async function (reason) {
+            await api('/api/admin/submissions/' + encodeURIComponent(id) + '/review', { method: 'POST', body: JSON.stringify({ status: 'rejected', note: reason }) });
+            await navigate('review-jobs');
+            showDialog('Pengajuan ditolak', 'Alasan sudah disimpan dan satu kuota job dibebaskan.', { autoMs: 3000, kind: 'warning', icon: '×' });
+          });
+        } else {
+          showDialog('Setujui pengajuan?', 'Saldo reward ' + cash((jobs[results[0].find(function (x) { return String(x.id) === String(id); }) || {}).reward || 0) + ' akan ditambahkan ke akun pengguna jika disetujui.', { kind: 'warning', icon: '!' });
+          $('#dialogOk').textContent = 'Setujui reward';
+          $('#dialogOk').className = 'button button-success';
+          $('#dialogOk').addEventListener('click', async function acceptJob() {
+            try {
+              var res = await api('/api/admin/submissions/' + encodeURIComponent(id) + '/review', { method: 'POST', body: JSON.stringify({ status: 'approved', note: '' }) });
+              closeDialog();
+              await navigate('review-jobs');
+              showDialog('Job disetujui', 'Reward sudah ditambahkan ke saldo pengguna.', { autoMs: 3000 });
+            } catch (error) { closeDialog(); showDialog('Belum berhasil', error.message, { kind: 'error' }); }
+          }, { once: true });
+        }
+      });
+    });
   };
   var renderCodes = async function () {
     var codes = await api('/api/admin/codes');
