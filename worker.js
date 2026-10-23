@@ -391,6 +391,9 @@ try {
         return reply({ok:true,command:true,message:"Mute @"+targets[0].username+" sudah dibuka."},200,cors(request,env));
       }
       if(/^\/mute\b|^\/unmute\b/i.test(message)) return fail("Format perintah: /mute @username 7 atau /unmute @username.",400,cors(request,env));
+      if (/(?:https?:\/\/|www\.|wa\.me\/|t\.me\/|discord\.gg\/|\b(?:jual|jualan|jasa|promo|promosi|joki|referral|subscribe|open\s+jasa|dm\s+for)\b)/i.test(message)) {
+        return fail("Promosi, tautan undangan, dan iklan tidak diperbolehkan di Global Chat.",400,cors(request,env));
+      }
       const activeMutes=await rest(env,"chat_mutes","user_id=eq."+encodeURIComponent(s.user.id)+"&select=expires_at");
       const mute=(activeMutes||[]).find(x=>Date.parse(x.expires_at)>Date.now());
       if(mute) return fail("Kamu sedang di-mute sampai "+mute.expires_at+".",403,cors(request,env));
