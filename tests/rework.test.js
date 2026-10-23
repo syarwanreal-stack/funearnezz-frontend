@@ -39,6 +39,17 @@ test("frontend includes clear dialogs and the required user workflows", async ()
   assert.match(app, /var \$\$ = function \(selector, root\).*querySelectorAll/);
 });
 
+test("withdrawal UI separates DANA and Robux into selectable tabs", async () => {
+  const app = await read("app.js");
+  const css = await read("style.css");
+  assert.match(app, /data-withdraw-tab="robux"/);
+  assert.match(app, /data-withdraw-tab="dana"/);
+  assert.match(app, /id="withdrawType" name="type" type="hidden" value="robux"/);
+  assert.match(app, /\$\$\('\[data-withdraw-tab\]'\)\.forEach/);
+  assert.match(css, /\.withdraw-tabs\{display:grid/);
+  assert.match(css, /\.withdraw-tab\.active/);
+});
+
 test("worker has authenticated chat moderation, code redemption and combined queue support routes", async () => {
   const worker = await read("worker.js");
   for (const phrase of [
