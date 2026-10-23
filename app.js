@@ -2,7 +2,7 @@
 (function () {
   var $ = function (selector, root) { return (root || document).querySelector(selector); };
   var $$ = function (selector, root) { return Array.prototype.slice.call((root || document).querySelectorAll(selector)); };
-  var state = { user: null, view: 'dashboard', config: {}, data: {}, maintenance: null, dialogTimer: null, pendingCount: 0, notificationReady: false, pollTimer: null };
+  var state = { user: null, view: 'dashboard', config: {}, data: {}, maintenance: null, dialogTimer: null, pendingCount: 0, notificationReady: false, pollTimer: null, chatTimer: null };
   var viewMeta = {
     dashboard: ['RUANG KAMU', 'Dashboard', 'Pantau saldo dan tugas yang tersedia.'],
     history: ['AKTIVITAS', 'Riwayat', 'Catatan saldo masuk, saldo keluar, dan status pengajuan.'],
@@ -121,6 +121,8 @@
     closeMenu();
     setAuthMode('register');
     clearInterval(state.pollTimer);
+    clearInterval(state.chatTimer);
+    state.chatTimer = null;
   };
   var setLoggedIn = function (user) {
     state.user = user;
@@ -199,6 +201,8 @@
       return;
     }
     state.view = view;
+    clearInterval(state.chatTimer);
+    state.chatTimer = null;
     closeMenu();
     $$('.nav-link[data-view]').forEach(function (node) { node.classList.toggle('active', node.dataset.view === view); });
     $('#pageEyebrow').textContent = viewMeta[view][0];
@@ -417,6 +421,21 @@
       finally { button.disabled = false; input.value = ''; }
     });
     var area = $('#chatMessages'); area.scrollTop = area.scrollHeight;
+    state.chatTimer = setInterval(async function () {
+      if (state.view !== 'chat') return;
+      var liveArea = $('#chatMessages');
+      if (!liveArea) return;
+      var wasNearBottom = liveArea.scrollHeight - liveArea.scrollTop - liveArea.clientHeight < 50;
+      try {
+        var fresh = await api('/api/chat');
+        if (state.view !== 'chat' || !$('#chatMessages')) return;
+        liveArea = $('#chatMessages');
+        liveArea.innerHTML = chatHtml(fresh);
+        if (wasNearBottom) liveArea.scrollTop = liveArea.scrollHeight;
+      } catch (error) {
+        // Keep the existing messages on a transient poll failure.
+      }
+    }, 5000);
   };
   var chatHtml = function (rows) {
     if (!Array.isArray(rows) || !rows.length) return '<div class="empty-state">Belum ada pesan. Mulai percakapan dengan sopan.</div>';
