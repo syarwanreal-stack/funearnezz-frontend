@@ -370,7 +370,7 @@ try {
       const s=await requireUser(request,env),b=await body(request),message=String(b.message||"").trim();
       if(!message) return fail("Tulis pesan terlebih dahulu.",400,cors(request,env));
       if(message.length>1000) return fail("Pesan maksimal 1.000 karakter.",400,cors(request,env));
-      let match=message.match(/^\\/mute\\s+@?([A-Za-z0-9_]{3,24})\\s+([1-9][0-9]{0,2})$/i);
+      let match=message.match(/^\/mute\s+@?([A-Za-z0-9_]{3,24})\s+([1-9][0-9]{0,2})$/i);
       if(match) {
         const moderator=await requireStaff(request,env),days=Number(match[2]);
         if(days>365) return fail("Durasi mute maksimal 365 hari.",400,cors(request,env));
@@ -381,7 +381,7 @@ try {
         await audit(env,moderator.user.id,"chat.mute",{target:targets[0].username,days});
         return reply({ok:true,command:true,message:"@"+targets[0].username+" dibisukan selama "+days+" hari."},200,cors(request,env));
       }
-      match=message.match(/^\\/unmute\\s+@?([A-Za-z0-9_]{3,24})$/i);
+      match=message.match(/^\/unmute\s+@?([A-Za-z0-9_]{3,24})$/i);
       if(match) {
         const moderator=await requireStaff(request,env);
         const targets=await rest(env,"profiles","username=ilike."+encodeURIComponent(match[1])+"&select=id,username");
@@ -390,7 +390,7 @@ try {
         await audit(env,moderator.user.id,"chat.unmute",{target:targets[0].username});
         return reply({ok:true,command:true,message:"Mute @"+targets[0].username+" sudah dibuka."},200,cors(request,env));
       }
-      if(/^\\/mute\\b|^\\/unmute\\b/i.test(message)) return fail("Format perintah: /mute @username 7 atau /unmute @username.",400,cors(request,env));
+      if(/^\/mute\b|^\/unmute\b/i.test(message)) return fail("Format perintah: /mute @username 7 atau /unmute @username.",400,cors(request,env));
       const activeMutes=await rest(env,"chat_mutes","user_id=eq."+encodeURIComponent(s.user.id)+"&select=expires_at");
       const mute=(activeMutes||[]).find(x=>Date.parse(x.expires_at)>Date.now());
       if(mute) return fail("Kamu sedang di-mute sampai "+mute.expires_at+".",403,cors(request,env));
