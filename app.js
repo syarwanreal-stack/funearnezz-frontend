@@ -541,4 +541,5 @@ document.addEventListener("submit", event => {
   else if (event.target.id === "adminSettingsForm") saveAdminSettings(event);
 });
 $("#year").textContent = new Date().getFullYear();
-renderProfile(); renderView("overview"); checkHealth(); restoreSession();
+renderProfile(); renderView("overview"); checkHealth(); checkMaintenance(); restoreSession();
+setInterval(() => checkMaintenance(), 60000);
