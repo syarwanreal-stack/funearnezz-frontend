@@ -323,6 +323,7 @@
     var requests = [];
     (history.withdrawals || []).forEach(function (item) { requests.push({ type: 'DANA', created_at: item.created_at, amount: item.amount, payout: item.payout_amount, fee: item.fee_amount, method: item.method, status: item.status, note: item.review_note, id: item.id }); });
     (history.robux || []).forEach(function (item) { requests.push({ type: 'ROBUX', created_at: item.created_at, amount: item.cost, details: item.robux + ' Robux · ' + item.method + ' · ' + item.username, status: item.status, note: item.review_note, id: item.id }); });
+    (history.diamonds || []).forEach(function (item) { requests.push({ type: 'DIAMOND FF', created_at: item.created_at, amount: item.cost, details: item.diamonds + ' diamond · UID ' + item.ff_uid + (item.ff_server_id ? ' · Server ' + item.ff_server_id : ''), status: item.status, note: item.review_note, id: item.id }); });
     requests.sort(function (a, b) { return new Date(b.created_at) - new Date(a.created_at); });
     var requestHtml = requests.map(function (item) {
       var status = statusFor(item.status);
@@ -336,7 +337,7 @@
     }).join('');
     $('#viewRoot').innerHTML =
       '<section class="panel"><div class="panel-heading"><div><h2>Mutasi saldo</h2><p>Uang masuk dan keluar dari akun kamu.</p></div></div><div class="stack">' + (ledger || '<div class="empty-state">Belum ada transaksi saldo.</div>') + '</div></section>' +
-      '<section class="panel"><div class="panel-heading"><div><h2>Riwayat withdraw</h2><p>DANA dan Robux dalam satu daftar.</p></div></div><div class="stack">' + (requestHtml || '<div class="empty-state">Belum ada request withdraw.</div>') + '</div></section>' +
+      '<section class="panel"><div class="panel-heading"><div><h2>Riwayat withdraw</h2><p>DANA, Robux, dan diamond FF dalam satu daftar.</p></div></div><div class="stack">' + (requestHtml || '<div class="empty-state">Belum ada request withdraw.</div>') + '</div></section>' +
       '<section class="panel"><div class="panel-heading"><div><h2>Riwayat job</h2><p>Status dari pengajuan job yang pernah dikirim.</p></div></div><div class="stack">' + (submissions || '<div class="empty-state">Belum ada pengajuan job.</div>') + '</div></section>';
   };
   var renderWithdraw = async function () {
