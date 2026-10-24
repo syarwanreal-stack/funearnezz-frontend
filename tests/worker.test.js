@@ -314,7 +314,7 @@ test("OWNER PANEL user listing is restricted to username wann", async () => {
   }, async () => {
     const response = await worker.fetch(request("/api/owner/users", { headers: { Authorization: "Bearer admin-token" } }), env);
     assert.equal(response.status, 403);
-    assert.match((await response.json()).error, /wann/i);
+    assert.match((await response.json()).error, /owner/i);
   });
 });
 
