@@ -304,3 +304,38 @@ test("schema and additive PR #26 migration define all RPCs used by Worker", asyn
   assert.match(sql, /submission-proofs[^;]*false/s, "proof bucket must not be public");
   assert.match(sql, /enable row level security/i);
 });
+
+
+test("OWNER PANEL user listing is restricted to username wann", async () => {
+  await withFetchStub(async (url, init) => {
+    if (url.pathname === "/auth/v1/user") return json({ id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" });
+    if (url.pathname === "/rest/v1/profiles") return json([{ id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", username: "admin_other", role: "admin", disabled: false }]);
+    return json({ message: "unexpected test request", path: url.pathname }, 500);
+  }, async () => {
+    const response = await worker.fetch(request("/api/owner/users", { headers: { Authorization: "Bearer admin-token" } }), env);
+    assert.equal(response.status, 403);
+    assert.match((await response.json()).error, /wann/i);
+  });
+});
+
+test("OWNER PANEL lets wann promote a selected user and records audit", async () => {
+  const calls = [];
+  await withFetchStub(async (url, init) => {
+    calls.push({ path: url.pathname, method: init.method || "GET", body: init.body });
+    if (url.pathname === "/auth/v1/user") return json({ id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb" });
+    if (url.pathname === "/rest/v1/profiles" && url.search.includes("id=eq.bbbbbbbb")) return json([{ id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", username: "wann", role: "admin", disabled: false }]);
+    if (url.pathname === "/rest/v1/profiles" && url.search.includes("id=eq.cccccccc")) return init.method === "PATCH"
+      ? json([{ id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc", username: "member_test", role: "admin" }])
+      : json([{ id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc", username: "member_test", role: "user" }]);
+    if (url.pathname === "/rest/v1/audit_logs") return new Response(null, { status: 204 });
+    return json({ message: "unexpected test request", path: url.pathname }, 500);
+  }, async () => {
+    const response = await worker.fetch(request("/api/owner/users/cccccccc-cccc-4ccc-8ccc-cccccccccccc/role", {
+      method: "POST", headers: { Authorization: "Bearer wann-token", "content-type": "application/json" },
+      body: JSON.stringify({ role: "admin" }),
+    }), env);
+    assert.equal(response.status, 200, await response.clone().text());
+    assert.equal((await response.json()).user.role, "admin");
+    assert.ok(calls.some(x => x.path === "/rest/v1/audit_logs"), "owner role changes should be audited");
+  });
+});
