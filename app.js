@@ -247,8 +247,8 @@
     } catch (e) { setLoggedOut(); throw e; }
   };
   var loadRequestsMine = async function () {
-    var results = await Promise.all([api('/api/withdrawals').catch(function () { return []; }), api('/api/robux').catch(function () { return []; })]);
-    return { withdrawals: Array.isArray(results[0]) ? results[0] : [], robux: Array.isArray(results[1]) ? results[1] : [] };
+    var results = await Promise.all([api('/api/withdrawals').catch(function () { return []; }), api('/api/robux').catch(function () { return []; }), api('/api/diamond').catch(function () { return []; })]);
+    return { withdrawals: Array.isArray(results[0]) ? results[0] : [], robux: Array.isArray(results[1]) ? results[1] : [], diamonds: Array.isArray(results[2]) ? results[2] : [] };
   };
   var statusFor = function (status) {
     status = String(status || 'pending').toLowerCase();
@@ -347,6 +347,7 @@
     var rows = [];
     requests.withdrawals.forEach(function (item) { rows.push({ kind: 'DANA', amount: item.amount, payout: item.payout_amount, fee: item.fee_amount, status: item.status, at: item.created_at, note: item.review_note, details: item.destination }); });
     requests.robux.forEach(function (item) { rows.push({ kind: 'ROBUX', amount: item.cost, status: item.status, at: item.created_at, note: item.review_note, details: item.robux + ' Robux · ' + item.method + ' · ' + item.username }); });
+    (requests.diamonds || []).forEach(function (item) { rows.push({ kind: 'DIAMOND FF', amount: item.cost, status: item.status, at: item.created_at, note: item.review_note, details: item.diamonds + ' diamond · UID ' + item.ff_uid + (item.ff_server_id ? ' · Server ' + item.ff_server_id : '') }); });
     rows.sort(function (a, b) { return new Date(b.at) - new Date(a.at); });
     var requestHtml = rows.map(function (item) {
       return '<article class="history-row"><div class="card-top"><div><strong>' + esc(item.kind) + ' · potong ' + cash(item.amount) + '</strong><p class="subtle">' + esc(date(item.at)) + '</p></div>' + statusTag(item.status) + '</div><p class="subtle">' + esc(item.details || '') + '</p>' +
@@ -522,13 +523,14 @@
     return Number.isNaN(d.getTime()) ? '' : new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
   };
   var renderRequests = async function () {
-    var result = await Promise.all([api('/api/admin/withdrawals'), api('/api/admin/robux'), api('/api/admin/users')]);
+    var result = await Promise.all([api('/api/admin/withdrawals'), api('/api/admin/robux'), api('/api/admin/diamond'), api('/api/admin/users')]);
     var requests = [];
     (result[0] || []).forEach(function (item) { requests.push(Object.assign({ kind: 'dana' }, item)); });
     (result[1] || []).forEach(function (item) { requests.push(Object.assign({ kind: 'robux' }, item)); });
+    (result[2] || []).forEach(function (item) { requests.push(Object.assign({ kind: 'diamond' }, item)); });
     requests.sort(function (a, b) { return new Date(b.created_at) - new Date(a.created_at); });
     var users = {};
-    (result[2] || []).forEach(function (u) { users[u.id] = u.username || u.id; });
+    (result[3] || []).forEach(function (u) { users[u.id] = u.username || u.id; });
     var pending = requests.filter(function (r) { return r.status === 'pending'; }).length;
     state.pendingCount = pending;
     $('#pendingBadge').textContent = String(pending);
@@ -536,13 +538,13 @@
     $('#viewRoot').innerHTML = '<section class="panel"><div class="panel-heading"><div><h2>Semua request withdraw</h2><p>Request Dana dan Robux tergabung di bawah. Terima hanya setelah pembayaran benar-benar selesai.</p></div><button id="enableNotify" class="button button-soft" type="button">Aktifkan notifikasi</button></div><div class="stack">' + (requests.map(function (item) {
       var id = item.kind === 'dana' ? item.id : item.id;
       var pendingItem = item.status === 'pending';
-      var methodText = item.kind === 'dana' ? 'DANA' : 'ROBUX · ' + (item.method === 'gamepass' ? 'Game Pass' : 'Username');
+      var methodText = item.kind === 'dana' ? 'DANA' : item.kind === 'diamond' ? 'DIAMOND FREE FIRE' : 'ROBUX · ' + (item.method === 'gamepass' ? 'Game Pass' : 'Username');
       var debit = item.kind === 'dana' ? item.amount : item.cost;
       var payout = item.kind === 'dana' ? item.payout_amount : null;
-      var detail = item.kind === 'dana' ? 'Tujuan: ' + item.destination : 'Username Roblox: ' + item.username + (item.method === 'gamepass' ? ' · Game Pass: ' + item.gamepass_url : '');
+      var detail = item.kind === 'dana' ? 'Tujuan: ' + item.destination : item.kind === 'diamond' ? 'UID Free Fire: ' + item.ff_uid + (item.ff_server_id ? ' · Server: ' + item.ff_server_id : '') : 'Username Roblox: ' + item.username + (item.method === 'gamepass' ? ' · Game Pass: ' + item.gamepass_url : '');
       return '<article class="request-card"><div class="card-top"><div><h3>' + esc(methodText) + '</h3><p>@' + esc(users[item.user_id] || 'user') + ' · ' + esc(date(item.created_at)) + '</p></div>' + statusTag(item.status) + '</div>' +
-      '<div class="request-meta"><div><small>Saldo dipotong</small><strong>' + cash(debit) + '</strong></div><div><small>' + (item.kind === 'dana' ? 'Dana dikirim' : 'Jumlah Robux') + '</small><strong>' + (item.kind === 'dana' ? cash(payout == null ? debit : payout) : esc(item.robux + ' Robux')) + '</strong></div></div>' +
-      (item.kind === 'dana' ? '<p>' + esc(detail) + ' · Biaya admin ' + cash(item.fee_amount || Math.max(0, Number(debit) - Number(payout == null ? debit : payout))) + '</p>' : '<p>' + esc(detail) + '<br>Tarif: ' + cash(item.rate) + ' per Robux</p>') +
+      '<div class="request-meta"><div><small>Saldo dipotong</small><strong>' + cash(debit) + '</strong></div><div><small>' + (item.kind === 'dana' ? 'Dana dikirim' : item.kind === 'diamond' ? 'Jumlah diamond' : 'Jumlah Robux') + '</small><strong>' + (item.kind === 'dana' ? cash(payout == null ? debit : payout) : item.kind === 'diamond' ? esc(item.diamonds + ' diamond') : esc(item.robux + ' Robux')) + '</strong></div></div>' +
+      (item.kind === 'dana' ? '<p>' + esc(detail) + ' · Biaya admin ' + cash(item.fee_amount || Math.max(0, Number(debit) - Number(payout == null ? debit : payout))) + '</p>' : '<p>' + esc(detail) + '<br>Tarif: ' + cash(item.rate) + (item.kind === 'diamond' ? ' per diamond' : ' per Robux') + '</p>') +
       (item.review_note ? '<div class="inline-alert danger-alert">Alasan penolakan: ' + esc(item.review_note) + '</div>' : '') +
       (pendingItem ? '<div class="button-row"><button class="button button-danger" type="button" data-review="reject" data-kind="' + item.kind + '" data-id="' + esc(id) + '">Tolak</button><button class="button button-success" type="button" data-review="accept" data-kind="' + item.kind + '" data-id="' + esc(id) + '">Terima</button></div>' : '') +
       '</article>';
@@ -584,7 +586,7 @@
     });
   };
   var reviewRequest = async function (kind, id, accept, note) {
-    var route = kind === 'dana' ? 'withdrawals' : 'robux';
+    var route = kind === 'dana' ? 'withdrawals' : kind === 'diamond' ? 'diamond' : 'robux';
     var status = accept ? (kind === 'dana' ? 'paid' : 'completed') : 'rejected';
     await api('/api/admin/' + route + '/' + encodeURIComponent(id) + '/review', { method: 'POST', body: JSON.stringify({ status: status, note: note }) });
   };
@@ -722,8 +724,8 @@
     if (!state.user || state.user.role !== 'admin') return;
     var check = async function () {
       try {
-        var r = await Promise.all([api('/api/admin/withdrawals'), api('/api/admin/robux')]);
-        var count = (r[0] || []).filter(function (x) { return x.status === 'pending'; }).length + (r[1] || []).filter(function (x) { return x.status === 'pending'; }).length;
+        var r = await Promise.all([api('/api/admin/withdrawals'), api('/api/admin/robux'), api('/api/admin/diamond')]);
+        var count = (r[0] || []).filter(function (x) { return x.status === 'pending'; }).length + (r[1] || []).filter(function (x) { return x.status === 'pending'; }).length + (r[2] || []).filter(function (x) { return x.status === 'pending'; }).length;
         if (state.pendingCount !== null && count > state.pendingCount && state.notificationReady && 'Notification' in window) new Notification('Request withdraw baru', { body: 'Ada ' + (count - state.pendingCount) + ' request baru di antrean.' });
         state.pendingCount = count;
         $('#pendingBadge').textContent = String(count);
