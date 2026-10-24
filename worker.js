@@ -267,12 +267,11 @@ async function handle(request,env) {
     }
     if(path==="/api/dashboard"&&method==="GET") {
       const s=await requireUser(request,env);
-      const [jobs,submissions,withdrawals]=await Promise.all([
-        rest(env,"jobs","status=eq.active&select=id,title,description,reward,status&order=created_at.desc"),
+      const [submissions,withdrawals]=await Promise.all([
         rest(env,"submissions","user_id=eq."+s.user.id+"&select=id,status&order=created_at.desc"),
         rest(env,"withdrawals","user_id=eq."+s.user.id+"&select=id,status,amount&order=created_at.desc")
       ]);
-      return reply({user:safeProfile(s.profile),jobs,stats:{submissions:submissions.length,withdrawals:withdrawals.length}},200,cors(request,env));
+      return reply({user:safeProfile(s.profile),stats:{submissions:submissions.length,withdrawals:withdrawals.length}},200,cors(request,env));
     }
     if(path==="/api/jobs"&&method==="GET") {
       const rows=await rest(env,"jobs","status=eq.active&select=*&order=created_at.desc");
