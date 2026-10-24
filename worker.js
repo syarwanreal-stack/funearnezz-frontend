@@ -97,15 +97,6 @@ const body = async req => {
 const usernameOK = u => typeof u==="string" && u.length>=3 && u.length<=24 && /^[A-Za-z0-9_]+(?: [A-Za-z0-9_]+)*$/.test(u);
 const emailFor = u => u.toLowerCase()+"@"+AUTH_HOST;
 const safeProfile = p => p ? ({id:p.id, username:p.username, email:p.email||null, email_verified_at:p.email_verified_at||null, emailVerified:!!p.email_verified_at, referral_code:p.referral_code||null, announcement_seen_at:p.announcement_seen_at||null, role:p.role, balance:Number(p.balance||0), reserved_balance:Number(p.reserved_balance||0), created_at:p.created_at}) : null;
-async function verifyCaptcha(request, env, token) {
-  if (!env.TURNSTILE_SECRET_KEY || !env.TURNSTILE_SITE_KEY) throw Object.assign(new Error("CAPTCHA belum dikonfigurasi admin. Silakan coba lagi nanti."),{status:503});
-  if (!token || typeof token !== "string") throw Object.assign(new Error("Selesaikan CAPTCHA 'Saya bukan robot' terlebih dahulu."),{status:400});
-  const form=new URLSearchParams({secret:env.TURNSTILE_SECRET_KEY,response:token});
-  const ip=request.headers.get("CF-Connecting-IP"); if(ip) form.set("remoteip",ip);
-  const response=await fetch("https://challenges.cloudflare.com/turnstile/v0/siteverify",{method:"POST",headers:{"Content-Type":"application/x-www-form-urlencoded"},body:form});
-  const result=await response.json().catch(()=>({success:false}));
-  if(!response.ok||!result.success) throw Object.assign(new Error("CAPTCHA gagal atau kedaluwarsa. Centang CAPTCHA lagi."),{status:403});
-}
 async function logAuthEvent(request,env,userId,event) {
   const ip=request.headers.get("CF-Connecting-IP")||"", userAgent=(request.headers.get("User-Agent")||"").slice(0,500);
   try { await rest(env,"login_security_events","",{method:"POST",headers:{Prefer:"return=minimal"},body:JSON.stringify({user_id:userId,event,ip_address:ip||null,user_agent:userAgent||null})}); }
@@ -193,7 +184,6 @@ async function handle(request,env) {
     }
     if((path==="/api/register"||path==="/api/auth/register")&&method==="POST") {
       const b=await body(request), username=String(b.username||"").trim(), email=String(b.email||"").trim().toLowerCase(), password=String(b.password||"");
-      await verifyCaptcha(request,env,b.captchaToken);
       const referralCode=String(b.referralCode||b.referral_code||"").trim().toUpperCase();
       if(!usernameOK(username)) return fail("Username harus 3–24 karakter (huruf, angka, underscore)",400,cors(request,env));
       if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return fail("Masukkan alamat email yang valid.",400,cors(request,env));
@@ -253,7 +243,6 @@ async function handle(request,env) {
     }
     if((path==="/api/login"||path==="/api/auth/login")&&method==="POST") {
       const b=await body(request), identifier=String(b.email||b.username||"").trim(), password=String(b.password||"");
-      await verifyCaptcha(request,env,b.captchaToken);
       if(!identifier||!password) return fail("Email atau password salah",401,cors(request,env));
       // Keep legacy username-only accounts accessible while new registrations require email.
       let loginEmail;
@@ -291,7 +280,7 @@ async function handle(request,env) {
       if(settings.diamondMin==null) settings.diamondMin=1;
       if(settings.referralInviterReward==null) settings.referralInviterReward=0;
       if(settings.referralInviteeReward==null) settings.referralInviteeReward=0;
-      return reply({captchaRequired:true,captchaSiteKey:env.TURNSTILE_SITE_KEY||"",settings},200,cors(request,env));
+      return reply({settings},200,cors(request,env));
     }
     if(path==="/api/announcement/seen"&&method==="POST") {
       const s=await requireUser(request,env);
