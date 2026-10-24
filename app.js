@@ -410,7 +410,6 @@
       '<label class="field" id="robuxMethodWrap" hidden><span>Metode Robux</span><select id="robuxMethod" name="method"><option value="gamepass">Game Pass</option><option value="username">Via Username</option></select></label>' +
       '<label class="field" id="robuxCountWrap" hidden><span>Jumlah Robux</span><input id="robuxCount" type="number" name="robux" min="' + esc(numberSetting(config.robuxMin, 10)) + '" step="1" placeholder="Jumlah Robux"></label>' +
       '<label class="field" id="robloxUsernameWrap" hidden><span>Username Roblox</span><input name="robloxUsername" maxlength="100" placeholder="Username Roblox"></label>' +
-      '<label class="field wide" id="gamepassWrap" hidden><span>Link Game Pass</span><input name="gamepassUrl" type="url" maxlength="500" placeholder="https://www.roblox.com/..."></label>' +
       '<label class="field" id="diamondCountWrap" hidden><span>Paket diamond FF</span><select id="diamondCount" name="diamonds"><option value="">Pilih jumlah diamond</option>' +
       [5, 12, 50, 70, 140, 355, 720, 1450, 2180, 3640, 7290].filter(function (n) { return n >= numberSetting(config.diamondMin, 1); }).map(function (n) { return '<option value="' + n + '">' + n.toLocaleString('id-ID') + ' diamond</option>'; }).join('') +
       '</select></label>' +
@@ -437,7 +436,6 @@
       $('#robuxMethodWrap').hidden = type !== 'robux';
       $('#robuxCountWrap').hidden = type !== 'robux';
       $('#robloxUsernameWrap').hidden = type !== 'robux';
-      $('#gamepassWrap').hidden = type !== 'robux' || method !== 'gamepass';
       $('#diamondCountWrap').hidden = type !== 'diamond';
       $('#diamondUidWrap').hidden = type !== 'diamond';
 
@@ -450,7 +448,12 @@
       } else {
         var rate = numberSetting(method === 'gamepass' ? config.gamepassRate : config.usernameRate, method === 'gamepass' ? 170 : 230);
         var cost = count * rate;
-        $('#withdrawCalc').textContent = 'Tarif ' + cash(rate) + ' per Robux. ' + count + ' Robux akan memotong saldo ' + cash(cost) + '. Minimal ' + numberSetting(config.robuxMin, 10) + ' Robux.';
+        if (method === 'gamepass') {
+          var passPrice = count > 0 ? Math.ceil(count / 0.70) : 0;
+          $('#withdrawCalc').textContent = 'GAME PASS: Target bersih ' + count + ' Robux. Karena Roblox memotong sekitar 30%, minta pembeli membuat Game Pass seharga ' + passPrice + ' Robux (pembulatan ke atas; estimasi hasil bersih minimal ' + count + ' Robux). Jangan pasang harga target bersih saja. Tarif withdraw ' + cash(rate) + ' per Robux; saldo dipotong ' + cash(cost) + '. Minimal ' + numberSetting(config.robuxMin, 10) + ' Robux. Periksa kembali hasil bersih di Roblox karena kebijakan/aturan pembulatan dapat berubah.';
+        } else {
+          $('#withdrawCalc').textContent = 'Tarif ' + cash(rate) + ' per Robux. ' + count + ' Robux akan memotong saldo ' + cash(cost) + '. Minimal ' + numberSetting(config.robuxMin, 10) + ' Robux.';
+        }
       }
     };
     $$('[data-withdraw-tab]').forEach(function (tab) {
@@ -481,11 +484,9 @@
           var robux = Number(form.robux.value);
           var methodName = form.elements.namedItem('method').value;
           var uname = form.robloxUsername.value.trim();
-          var url = form.gamepassUrl.value.trim();
           if (!Number.isSafeInteger(robux) || robux < numberSetting(config.robuxMin, 10)) throw new Error('Jumlah Robux di bawah batas minimum.');
           if (!uname) throw new Error('Username Roblox wajib diisi.');
-          if (methodName === 'gamepass' && !/^https:\/\/www\.roblox\.com\//i.test(url)) throw new Error('Link Game Pass Roblox wajib diisi.');
-          await api('/api/robux', { method: 'POST', body: JSON.stringify({ method: methodName, robux: robux, username: uname, gamepassUrl: methodName === 'gamepass' ? url : '' }) });
+          await api('/api/robux', { method: 'POST', body: JSON.stringify({ method: methodName, robux: robux, username: uname, gamepassUrl: '' }) });
         }
         await refreshUser();
         showDialog('Request terkirim', 'Request kamu sedang diproses berdasarkan antrean. Mohon menunggu.', { autoMs: 3000 });
