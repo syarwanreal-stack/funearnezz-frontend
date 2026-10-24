@@ -450,7 +450,7 @@
         var cost = count * rate;
         if (method === 'gamepass') {
           var passPrice = count > 0 ? Math.ceil(count / 0.70) : 0;
-          $('#withdrawCalc').textContent = 'Buat Game Pass seharga ' + passPrice + ' Robux agar target ' + count + ' Robux tercapai. Potongan Roblox sekitar 30% (estimasi). Tarif withdraw ' + cash(rate) + '/Robux; saldo dipotong ' + cash(cost) + '. Minimal ' + numberSetting(config.robuxMin, 10) + ' Robux.';
+          $('#withdrawCalc').textContent = 'Buat Game Pass seharga ' + passPrice + ' Robux [WAJIB]. Nominal Robux: ' + count + ' Robux. Saldo terpotong: ' + cash(cost) + ' (' + cash(rate) + ' per Robux). Potongan Roblox sekitar 30%.';
         } else {
           $('#withdrawCalc').textContent = 'Tarif ' + cash(rate) + ' per Robux. ' + count + ' Robux akan memotong saldo ' + cash(cost) + '. Minimal ' + numberSetting(config.robuxMin, 10) + ' Robux.';
         }
