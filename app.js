@@ -101,13 +101,15 @@
     });
   };
   var setAuthMode = function (mode) {
-    var register = mode === 'register';
+    var register = mode === 'register', verify = mode === 'verify';
     $('#registerForm').classList.toggle('hidden', !register);
-    $('#loginForm').classList.toggle('hidden', register);
-    $('#authHeading').textContent = register ? 'Daftar Akun' : 'Masuk';
-    $('#authSubheading').textContent = register ? 'Buat akun untuk mulai mendapatkan reward' : 'Masuk untuk melanjutkan';
+    $('#loginForm').classList.toggle('hidden', register || verify);
+    $('#verifyForm').classList.toggle('hidden', !verify);
+    $('#authHeading').textContent = register ? 'Daftar Akun' : verify ? 'Verifikasi Email' : 'Masuk';
+    $('#authSubheading').textContent = register ? 'Buat akun dan verifikasi email untuk mulai mendapatkan reward' : verify ? 'Masukkan kode yang dikirim ke email kamu' : 'Masuk untuk melanjutkan';
     $('#authSwitchText').textContent = register ? 'Sudah punya akun?' : 'Belum punya akun?';
     $('#switchAuth').textContent = register ? 'Login' : 'Daftar sekarang';
+    $('#switchAuth').parentElement.classList.toggle('hidden', verify);
     $('#authNotice').classList.add('hidden');
     $('#authNotice').textContent = '';
   };
@@ -123,7 +125,9 @@
     setAuthMode('register');
     clearInterval(state.pollTimer);
     clearInterval(state.chatTimer);
+    clearInterval(state.maintenanceTimer);
     state.chatTimer = null;
+    state.maintenanceTimer = null;
   };
   var setLoggedIn = function (user) {
     state.user = user;
@@ -134,7 +138,10 @@
     $('#drawerRole').textContent = user.role === 'admin' ? 'Administrator' : user.role === 'staff' ? 'Staff' : 'Pengguna';
     $('#adminNav').classList.toggle('hidden', user.role !== 'admin');
     startRequestPolling();
+    clearInterval(state.maintenanceTimer);
     applyMaintenance();
+    state.maintenanceTimer = setInterval(applyMaintenance, 30000);
+    showAnnouncement();
     return navigate('dashboard');
   };
   var getConfig = async function () {
@@ -145,7 +152,11 @@
       state.config.gamepassRate = numberSetting(state.config.gamepassRate, 170);
       state.config.usernameRate = numberSetting(state.config.usernameRate, 230);
       state.config.danaFee = numberSetting(state.config.danaFee, 2000);
-    } catch (e) { state.config = { robuxMin: 10, gamepassRate: 170, usernameRate: 230, danaFee: 2000 }; }
+      state.config.diamondRate = numberSetting(state.config.diamondRate, 0);
+      state.config.diamondMin = numberSetting(state.config.diamondMin, 1);
+      state.config.referralInviterReward = numberSetting(state.config.referralInviterReward, 0);
+      state.config.referralInviteeReward = numberSetting(state.config.referralInviteeReward, 0);
+    } catch (e) { state.config = { robuxMin: 10, gamepassRate: 170, usernameRate: 230, danaFee: 2000, diamondRate: 0, diamondMin: 1, referralInviterReward: 0, referralInviteeReward: 0 }; }
     return state.config;
   };
   var numberSetting = function (value, fallback) {
@@ -153,34 +164,33 @@
     return Number.isFinite(n) && n >= 0 ? n : fallback;
   };
   var applyMaintenance = async function () {
+    if (!state.user) return;
     try {
       var data = await api('/api/maintenance');
       state.maintenance = data;
       if (data.enabled) {
         var suffix = data.reopenAt ? '\nPerkiraan dibuka kembali: ' + date(data.reopenAt) : '';
         var heading = $('#dialogLayer .dialog-card h2');
-        if (!state.user) {
-          if (heading && heading.textContent === 'Website sedang maintenance') closeDialog();
-        } else {
-          var locked = state.user.role !== 'admin';
-          if ($('#dialogLayer').classList.contains('hidden') || !heading || heading.textContent !== 'Website sedang maintenance' || $('#dialogLayer').dataset.maintenanceLocked !== String(locked)) {
-            showDialog('Website sedang maintenance', (data.reason || 'Sistem sedang dalam pemeliharaan.') + suffix, { locked: locked, kind: 'warning', icon: '⚙' });
-            $('#dialogLayer').dataset.maintenanceLocked = String(locked);
-          }
+        var locked = state.user.role !== 'admin';
+        if ($('#dialogLayer').classList.contains('hidden') || !heading || heading.textContent !== 'Website sedang maintenance' || $('#dialogLayer').dataset.maintenanceLocked !== String(locked)) {
+          showDialog('Website sedang maintenance', (data.reason || 'Sistem sedang dalam pemeliharaan.') + suffix, { locked: locked, kind: 'warning', icon: '⚙' });
+          $('#dialogLayer').dataset.maintenanceLocked = String(locked);
         }
       } else if ($('#dialogLayer .dialog-card h2') && $('#dialogLayer .dialog-card h2').textContent === 'Website sedang maintenance') closeDialog();
-    } catch (e) {
-      state.maintenance = { enabled: false };
-    }
+    } catch (e) { state.maintenance = { enabled: false }; }
+  };
+  var showAnnouncement = async function () {
+    if (!state.user) return;
     try {
       var cfg = await getConfig();
-      if (String(cfg.announcementEnabled) === 'true' || cfg.announcementEnabled === true) {
-        var key = String(cfg.announcementUpdatedAt || cfg.announcementMessage || '');
-        if (key && sessionStorage.getItem('fe_announcement_seen') !== key) {
-          sessionStorage.setItem('fe_announcement_seen', key);
-          if (!state.maintenance || !state.maintenance.enabled) showDialog(String(cfg.announcementTitle || 'Pengumuman'), String(cfg.announcementMessage || 'Ada informasi baru.'), { autoMs: 3000 });
-        }
-      }
+      if (!(String(cfg.announcementEnabled) === 'true' || cfg.announcementEnabled === true)) return;
+      var key = String(cfg.announcementUpdatedAt || cfg.announcementMessage || '');
+      if (!key) return;
+      var storageKey = 'fe_announcement_seen:' + String(state.user.id || state.user.username) + ':' + key;
+      try { if (localStorage.getItem(storageKey) === '1') return; } catch (e) {}
+      if (state.maintenance && state.maintenance.enabled) return;
+      try { localStorage.setItem(storageKey, '1'); } catch (e) {}
+      showDialog(String(cfg.announcementTitle || 'Pengumuman'), String(cfg.announcementMessage || 'Ada informasi baru.'), { autoMs: 6000 });
     } catch (e) { /* pengumuman gagal dimuat tidak memblokir login */ }
   };
   var closeMenu = function () {
@@ -763,8 +773,6 @@
     });
   };
   var boot = async function () {
-    await applyMaintenance();
-    setInterval(applyMaintenance, 30000);
     try {
       var result = await api('/api/me');
       await setLoggedIn(result.user);
