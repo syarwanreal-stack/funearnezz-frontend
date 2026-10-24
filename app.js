@@ -553,7 +553,7 @@
     state.pendingCount = pending;
     $('#pendingBadge').textContent = String(pending);
     $('#pendingBadge').classList.toggle('hidden', pending === 0);
-    $('#viewRoot').innerHTML = '<section class="panel"><div class="panel-heading"><div><h2>Semua request withdraw</h2><p>Request Dana dan Robux tergabung di bawah. Terima hanya setelah pembayaran benar-benar selesai.</p></div><button id="enableNotify" class="button button-soft" type="button">Aktifkan notifikasi</button></div><div class="stack">' + (requests.map(function (item) {
+    $('#viewRoot').innerHTML = '<section class="panel"><div class="panel-heading"><div><h2>Semua request withdraw</h2><p>Request DANA, Robux, dan diamond FF tergabung di bawah. Selesaikan pengiriman manual sebelum menyetujui.</p></div><button id="enableNotify" class="button button-soft" type="button">Aktifkan notifikasi</button></div><div class="stack">' + (requests.map(function (item) {
       var id = item.kind === 'dana' ? item.id : item.id;
       var pendingItem = item.status === 'pending';
       var methodText = item.kind === 'dana' ? 'DANA' : item.kind === 'diamond' ? 'DIAMOND FREE FIRE' : 'ROBUX · ' + (item.method === 'gamepass' ? 'Game Pass' : 'Username');
@@ -586,7 +586,7 @@
             return { title: 'Request ditolak', message: 'Alasan tersimpan dan saldo yang ditahan sudah dikembalikan.', options: { autoMs: 3000, kind: 'warning', icon: '×' } };
           });
         } else {
-          showDialog('Konfirmasi penyelesaian', 'Pastikan Dana/Robux sudah benar-benar dikirim sebelum mengonfirmasi request ini.', { kind: 'warning', icon: '!' });
+          showDialog('Konfirmasi penyelesaian', 'Pastikan DANA, Robux, atau diamond FF benar-benar sudah dikirim sebelum mengonfirmasi request ini.', { kind: 'warning', icon: '!' });
           var layer = $('#dialogLayer');
           var oldOk = $('#dialogOk');
           oldOk.textContent = 'Sudah selesai, terima';
