@@ -139,9 +139,8 @@
     $('#adminNav').classList.toggle('hidden', user.role !== 'admin');
     startRequestPolling();
     clearInterval(state.maintenanceTimer);
-    applyMaintenance();
+    applyMaintenance().then(showAnnouncement);
     state.maintenanceTimer = setInterval(applyMaintenance, 30000);
-    showAnnouncement();
     return navigate('dashboard');
   };
   var getConfig = async function () {
@@ -778,9 +777,9 @@
           button.disabled = true;
           try {
             await api('/api/admin/settings', { method: 'POST', body: JSON.stringify({ referralInviterReward: inviter, referralInviteeReward: invitee }) });
+            cfg.referralInviterReward = inviter;
+            cfg.referralInviteeReward = invitee;
             showDialog('Reward referral tersimpan', 'Reward untuk kedua pihak berhasil diperbarui.', { autoMs: 2500 });
-            await renderPayoutSettings();
-            showSection('referral');
           } catch (error) { showDialog('Gagal menyimpan reward', error.message, { kind: 'error' }); }
           finally { button.disabled = false; }
         });
