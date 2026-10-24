@@ -7,6 +7,8 @@
 <meta name="description" content="Dashboard tugas dan reward digital.">
 <title>Masuk</title>
 <link rel="stylesheet" href="./style.css">
+<script>window.turnstileReady = function(){ window.dispatchEvent(new Event("turnstile-ready")); };</script>
+<script src="https://challenges.cloudflare.com/turnstile/v0/api.js?onload=turnstileReady&render=explicit" async defer></script>
 <script src="./app.js" defer></script>
 </head>
 <body>
@@ -18,6 +20,7 @@
       <p id="authSubheading">Buat akun untuk mulai mendapatkan reward</p>
     </div>
     <div class="auth-content">
+      <div class="field wide"><span>Verifikasi keamanan</span><div id="captchaWidget" aria-label="Verifikasi Saya bukan robot"></div><p class="hint">Selesaikan CAPTCHA asli sebelum login atau daftar.</p></div>
       <div id="authNotice" class="inline-message hidden" role="status"></div>
       <form id="registerForm" class="form-stack">
         <label class="field"><span>Username</span><input id="registerUsername" name="username" autocomplete="username" minlength="3" maxlength="24" pattern="[A-Za-z0-9_]{3,24}" placeholder="Buat username" required><small>3–24 karakter, huruf, angka, atau underscore.</small></label>
