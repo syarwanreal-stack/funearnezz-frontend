@@ -431,7 +431,6 @@ async function handle(request,env) {
       if(!["gamepass","username"].includes(methodName)) return fail("Pilih metode Game Pass atau Via Username.");
       if(!Number.isSafeInteger(robux)||robux<min) return fail("Minimal penukaran "+min+" Robux.");
       if(!username) return fail("Username Roblox wajib diisi.");
-      if(methodName==="gamepass" && !/^https:\/\/www\.roblox\.com\//i.test(gamepassUrl)) return fail("Link Game Pass Roblox wajib diisi dengan URL HTTPS yang valid.");
       const rate=Number(methodName==="gamepass"?(cfg.gamepassRate||170):(cfg.usernameRate||230));
       const cost=robux*rate;
       if(!Number.isSafeInteger(rate)||rate<1||!Number.isSafeInteger(cost)) return fail("Tarif atau total potongan tidak valid.");
