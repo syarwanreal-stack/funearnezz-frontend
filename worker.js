@@ -161,6 +161,112 @@ async function ensureMaintenanceOff(env) {
     throw Object.assign(new Error(status.reason + suffix), {status:503});
   }
 }
+
+const storageDelete = async (env, bucket, objectPath) => {
+  if (!objectPath) return true;
+  const encoded = String(objectPath).split("/").map(encodeURIComponent).join("/");
+  await sb(env, "/storage/v1/object/" + bucket + "/" + encoded, { method: "DELETE" });
+  return true;
+};
+const illustrationUrl = (env, objectPath) => objectPath
+  ? env.SUPABASE_URL.replace(/\/$/, "") + "/storage/v1/object/public/job-illustrations/" + String(objectPath).split("/").map(encodeURIComponent).join("/")
+  : null;
+async function recordAutoClear(env, data) {
+  try {
+    await rest(env, "auto_clear_logs", "", {
+      method: "POST",
+      headers: { Prefer: "return=minimal" },
+      body: JSON.stringify({
+        trigger: data.trigger || "scheduled",
+        deleted_chat_messages: data.deleted_chat_messages || 0,
+        deleted_proof_files: data.deleted_proof_files || 0,
+        deleted_job_illustrations: data.deleted_job_illustrations || 0,
+        expired_registrations: data.expired_registrations || 0,
+        failures: data.failures || 0,
+        details: data.details || {}
+      })
+    });
+  } catch (e) {
+    console.error("Auto Clear report could not be saved", String(e?.message || e).slice(0, 200));
+  }
+}
+async function runAutoClear(env) {
+  const totals = { trigger: "scheduled", deleted_chat_messages: 0, deleted_proof_files: 0, deleted_job_illustrations: 0, expired_registrations: 0, failures: 0, details: {} };
+  const now = Date.now();
+  const chatCutoff = new Date(now - 4 * 86400000).toISOString();
+  const registrationCutoff = new Date(now - 3 * 3600000).toISOString();
+
+  try {
+    for (let batch = 0; batch < 5; batch++) {
+      const rows = await rest(env, "global_chat_messages", "created_at=lt." + encodeURIComponent(chatCutoff) + "&select=id&order=created_at.asc&limit=500");
+      if (!rows?.length) break;
+      const ids = rows.map(x => String(x.id)).filter(x => /^[A-Za-z0-9_-]+$/.test(x));
+      if (!ids.length) break;
+      await rest(env, "global_chat_messages", "id=in.(" + ids.join(",") + ")", { method: "DELETE", headers: { Prefer: "return=minimal" } });
+      totals.deleted_chat_messages += ids.length;
+      if (ids.length < 500) break;
+    }
+  } catch (e) { totals.failures++; totals.details.chat_error = String(e?.message || e).slice(0, 200); }
+
+  try {
+    const rows = await rest(env, "submissions", "status=in.(approved,rejected)&proof_url=not.is.null&select=id,proof_url&limit=200");
+    for (const row of rows || []) {
+      try {
+        await storageDelete(env, "submission-proofs", row.proof_url);
+        await rest(env, "submissions", "id=eq." + encodeURIComponent(row.id), { method: "PATCH", headers: { Prefer: "return=minimal" }, body: JSON.stringify({ proof_url: null }) });
+        totals.deleted_proof_files++;
+      } catch (e) { totals.failures++; }
+    }
+  } catch (e) { totals.failures++; totals.details.proof_error = String(e?.message || e).slice(0, 200); }
+
+  try {
+    const rows = await rest(env, "jobs", "status=eq.archived&illustration_path=not.is.null&select=id,illustration_path&limit=100");
+    for (const row of rows || []) {
+      try {
+        await storageDelete(env, "job-illustrations", row.illustration_path);
+        await rest(env, "jobs", "id=eq." + encodeURIComponent(row.id), { method: "PATCH", headers: { Prefer: "return=minimal" }, body: JSON.stringify({ illustration_path: null }) });
+        totals.deleted_job_illustrations++;
+      } catch (e) { totals.failures++; }
+    }
+  } catch (e) { totals.failures++; totals.details.illustration_error = String(e?.message || e).slice(0, 200); }
+
+  try {
+    const pending = await rest(env, "pending_registrations", "created_at=lt." + encodeURIComponent(registrationCutoff) + "&select=auth_user_id,email,username,referred_by,created_at&limit=200");
+    for (const row of pending || []) {
+      try {
+        const result = await sbAdmin(env, "/auth/v1/admin/users/" + encodeURIComponent(row.auth_user_id), { method: "GET" });
+        const authUser = result?.user || result;
+        if (authUser?.email_confirmed_at) {
+          await sb(env, "/rest/v1/rpc/complete_pending_registration", { method: "POST", body: JSON.stringify({ p_auth_user_id: row.auth_user_id }) });
+          continue;
+        }
+        await sbAdmin(env, "/auth/v1/admin/users/" + encodeURIComponent(row.auth_user_id), { method: "DELETE" });
+        totals.expired_registrations++;
+      } catch (e) { totals.failures++; }
+    }
+  } catch (e) { totals.failures++; totals.details.pending_signup_error = String(e?.message || e).slice(0, 200); }
+
+  // Clean up old unverified accounts created by the previous registration flow too.
+  try {
+    const legacy = await rest(env, "profiles", "email_verified_at=is.null&email=not.is.null&created_at=lt." + encodeURIComponent(registrationCutoff) + "&select=id,email&limit=200");
+    for (const profile of legacy || []) {
+      try {
+        const result = await sbAdmin(env, "/auth/v1/admin/users/" + encodeURIComponent(profile.id), { method: "GET" });
+        const authUser = result?.user || result;
+        if (authUser?.email_confirmed_at) {
+          await rest(env, "profiles", "id=eq." + encodeURIComponent(profile.id), { method: "PATCH", headers: { Prefer: "return=minimal" }, body: JSON.stringify({ email_verified_at: new Date().toISOString(), email: profile.email }) });
+        } else {
+          await sbAdmin(env, "/auth/v1/admin/users/" + encodeURIComponent(profile.id), { method: "DELETE" });
+          totals.expired_registrations++;
+        }
+      } catch (e) { totals.failures++; }
+    }
+  } catch (e) { totals.failures++; totals.details.legacy_signup_error = String(e?.message || e).slice(0, 200); }
+
+  await recordAutoClear(env, totals);
+  return totals;
+}
+
 async function handle(request,env) {
   const url=new URL(request.url); let path=url.pathname; const method=request.method;
   const aliases={"/api/auth/login":"/api/login","/api/auth/register":"/api/register","/api/auth/logout":"/api/logout","/api/tasks":"/api/jobs","/api/submissions/mine":"/api/history","/api/wallet":"/api/wallet"}; path=aliases[path]||path;
@@ -188,8 +294,11 @@ async function handle(request,env) {
       if(!usernameOK(username)) return fail("Username harus 3–24 karakter (huruf, angka, underscore)",400,cors(request,env));
       if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return fail("Masukkan alamat email yang valid.",400,cors(request,env));
       if(password.length<8||!/[A-Za-z]/.test(password)||!/[0-9]/.test(password)) return fail("Password minimal 8 karakter dan harus mengandung huruf serta angka",400,cors(request,env));
-      const exists=await rest(env,"profiles","username=ilike."+encodeURIComponent(username)+"&select=id");
-      if(exists.length) return fail("Username sudah digunakan",409,cors(request,env));
+      const [exists, pendingName] = await Promise.all([
+        rest(env,"profiles","username=ilike."+encodeURIComponent(username)+"&select=id"),
+        rest(env,"pending_registrations","username=ilike."+encodeURIComponent(username)+"&select=auth_user_id")
+      ]);
+      if(exists.length || pendingName.length) return fail("Username sudah digunakan atau masih menunggu verifikasi.",409,cors(request,env));
       let referredBy=null;
       if(referralCode) {
         const inviter=(await rest(env,"profiles","referral_code=eq."+encodeURIComponent(referralCode)+"&select=id"))[0];
@@ -207,17 +316,15 @@ async function handle(request,env) {
       if(Array.isArray(authUser.identities)&&authUser.identities.length===0) {
         return fail("Email sudah terdaftar atau tidak dapat digunakan.",409,cors(request,env));
       }
-      const profile={
-        id:authUser.id, username, email, email_verified_at:null, referral_code:"FEZ-"+crypto.randomUUID().replace(/-/g,"").slice(0,10).toUpperCase(),
-        referred_by:referredBy, role:"user", balance:0, reserved_balance:0, disabled:false
-      };
       try {
-        await rest(env,"profiles","on_conflict=id",{method:"POST",headers:{Prefer:"resolution=merge-duplicates,return=minimal"},body:JSON.stringify(profile)});
-      } catch(profileError) {
+        await rest(env,"pending_registrations","",{method:"POST",headers:{Prefer:"return=minimal"},body:JSON.stringify({
+          auth_user_id:authUser.id,email,username,referred_by:referredBy
+        })});
+      } catch(registrationError) {
         await sbAdmin(env,"/auth/v1/admin/users/"+encodeURIComponent(authUser.id),{method:"DELETE"}).catch(()=>{});
-        throw profileError;
+        throw registrationError;
       }
-      await audit(env,authUser.id,"account.registration_requested",{email,hasReferral:!!referredBy});
+      await audit(env,null,"account.registration_requested",{email,username,hasReferral:!!referredBy});
       await logAuthEvent(request,env,authUser.id,"register");
       return reply({ok:true,needsVerification:true,email,message:"Kode verifikasi telah diminta dikirim ke email kamu. Masukkan kode tersebut untuk mengaktifkan akun."},201,cors(request,env));
     }
@@ -228,9 +335,7 @@ async function handle(request,env) {
       const authUser=verified?.user||verified;
       const accessToken=verified?.access_token||verified?.session?.access_token;
       if(!authUser?.id||!accessToken) return fail("Kode belum valid atau sudah kedaluwarsa.",400,cors(request,env));
-      const updated=await rest(env,"profiles","id=eq."+encodeURIComponent(authUser.id),{method:"PATCH",headers:{Prefer:"return=representation"},body:JSON.stringify({email:email,email_verified_at:new Date().toISOString()})});
-      let profile=updated?.[0];
-      if(!profile) profile=(await rest(env,"profiles","id=eq."+encodeURIComponent(authUser.id)+"&select=*"))[0];
+      const profile=await sb(env,"/rest/v1/rpc/complete_pending_registration",{method:"POST",body:JSON.stringify({p_auth_user_id:authUser.id})});
       if(!profile||profile.disabled) return fail("Profil akun tidak tersedia.",403,cors(request,env));
       await audit(env,authUser.id,"account.email_verified",{});
       return reply({ok:true,user:safeProfile(profile),message:"Email berhasil diverifikasi."},200,sessionHeaders(cors(request,env),verified));
@@ -319,7 +424,8 @@ async function handle(request,env) {
         rest(env,"submissions","user_id=eq."+encodeURIComponent(s.user.id)+"&select=job_id")
       ]);
       const submitted = new Set((prior||[]).map(item=>String(item.job_id)));
-      const available=(rows||[]).filter(job=>(job.quota==null||Number(job.quota_used||0)<Number(job.quota))&&(job.allow_repeat||!submitted.has(String(job.id))));
+      const available=(rows||[]).filter(job=>(job.quota==null||Number(job.quota_used||0)<Number(job.quota))&&(job.allow_repeat||!submitted.has(String(job.id))))
+        .map(job=>({...job,illustration_url:illustrationUrl(env,job.illustration_path)}));
       return reply(available,200,cors(request,env));
     }
     if(path==="/api/diamond"&&method==="GET") {
@@ -508,9 +614,18 @@ async function handle(request,env) {
     if(path==="/api/admin/jobs"&&method==="GET") {await requireAdmin(request,env);return reply(await rest(env,"jobs","select=*&order=created_at.desc"),200,cors(request,env));}
     if(method==="DELETE" && path.startsWith("/api/admin/jobs/")) {
       const s=await requireAdmin(request,env), id=encodeURIComponent(decodeURIComponent(path.slice("/api/admin/jobs/".length)));
-      const rows=await rest(env,"jobs","id=eq."+id+"&select=id,title,status",{method:"PATCH",headers:{Prefer:"return=representation"},body:JSON.stringify({status:"archived"})});
+      const rows=await rest(env,"jobs","id=eq."+id+"&select=id,title,status,illustration_path",{method:"PATCH",headers:{Prefer:"return=representation"},body:JSON.stringify({status:"archived"})});
       if(!rows?.[0]) return fail("Job tidak ditemukan.",404,cors(request,env));
-      await audit(env,s.user.id,"job.archive",{id:rows[0].id,title:rows[0].title});
+      let illustrationDeleted=false;
+      if(rows[0].illustration_path) {
+        try {
+          await storageDelete(env,"job-illustrations",rows[0].illustration_path);
+          await rest(env,"jobs","id=eq."+id,{method:"PATCH",headers:{Prefer:"return=minimal"},body:JSON.stringify({illustration_path:null})});
+          illustrationDeleted=true;
+          await recordAutoClear(env,{trigger:"job_archived",deleted_job_illustrations:1,details:{job_id:rows[0].id}});
+        } catch(e) { await recordAutoClear(env,{trigger:"job_archived",failures:1,details:{job_id:rows[0].id,error:String(e?.message||e).slice(0,200)}}); }
+      }
+      await audit(env,s.user.id,"job.archive",{id:rows[0].id,title:rows[0].title,illustrationDeleted});
       return reply({ok:true,job:rows[0]},200,cors(request,env));
     }
     if(path==="/api/admin/jobs"&&method==="POST") {
@@ -520,12 +635,31 @@ async function handle(request,env) {
       if(quota!==null&&(!Number.isSafeInteger(quota)||quota<1||quota>1000000)) return fail("Kuota harus berupa angka bulat antara 1 dan 1.000.000.",400,cors(request,env));
       const link=String(b.link||"").trim().slice(0,1000);
       if(link) { try { const u=new URL(link); if(!["http:","https:"].includes(u.protocol)) return fail("Link job harus memakai HTTP atau HTTPS.",400,cors(request,env)); } catch { return fail("Format link job tidak valid.",400,cors(request,env)); } }
-      const rows=await rest(env,"jobs","",{method:"POST",headers:{Prefer:"return=representation"},body:JSON.stringify({
-        title:String(b.title).trim().slice(0,160),description:String(b.description||"").slice(0,4000),
-        link,reward:Number(b.reward),quota,quota_used:0,photo_required:!!b.photo_required,allow_repeat:!!b.allow_repeat,status:"active"
-      })});
-      await audit(env,s.user.id,"job.create",{title:b.title,quota});
-      return reply(rows?.[0]||{ok:true},201,cors(request,env));
+      const illustration=b.illustration;
+      let illustrationPath=null;
+      if(illustration && typeof illustration.arrayBuffer==="function" && illustration.size>0) {
+        if(illustration.size>2*1024*1024) return fail("Ilustrasi maksimal 2 MB.",413,cors(request,env));
+        const mime=String(illustration.type||"").toLowerCase();
+        const ext=({"image/jpeg":"jpg","image/png":"png","image/webp":"webp"})[mime];
+        if(!ext) return fail("Format ilustrasi yang didukung: JPG, PNG, atau WEBP.",415,cors(request,env));
+        illustrationPath="jobs/"+crypto.randomUUID()+"."+ext;
+        const encodedPath=illustrationPath.split("/").map(encodeURIComponent).join("/");
+        await sb(env,"/storage/v1/object/job-illustrations/"+encodedPath,{method:"POST",headers:{"Content-Type":mime,"x-upsert":"false"},body:await illustration.arrayBuffer()});
+      }
+      let rows;
+      try {
+        rows=await rest(env,"jobs","",{method:"POST",headers:{Prefer:"return=representation"},body:JSON.stringify({
+          title:String(b.title).trim().slice(0,160),description:String(b.description||"").slice(0,4000),
+          link,reward:Number(b.reward),quota,quota_used:0,photo_required:!!b.photo_required,allow_repeat:!!b.allow_repeat,status:"active",illustration_path:illustrationPath
+        })});
+      } catch(e) {
+        if(illustrationPath) await storageDelete(env,"job-illustrations",illustrationPath).catch(()=>{});
+        throw e;
+      }
+      await audit(env,s.user.id,"job.create",{title:b.title,quota,hasIllustration:!!illustrationPath});
+      const job=rows?.[0]||{ok:true};
+      if(job.illustration_path) job.illustration_url=illustrationUrl(env,job.illustration_path);
+      return reply(job,201,cors(request,env));
     }
     if(path==="/api/admin/submissions"&&method==="GET") {await requireAdmin(request,env);return reply(await rest(env,"submissions","select=*&order=created_at.desc"),200,cors(request,env));}
     if(path==="/api/admin/withdrawals"&&method==="GET") {await requireAdmin(request,env);return reply(await rest(env,"withdrawals","select=*&order=created_at.desc"),200,cors(request,env));}
@@ -533,6 +667,11 @@ async function handle(request,env) {
     if(path==="/api/admin/diamond"&&method==="GET") {await requireAdmin(request,env);return reply(await rest(env,"diamond_requests","select=*&order=created_at.desc"),200,cors(request,env));}
     if(path==="/api/admin/users"&&method==="GET") {await requireAdmin(request,env);return reply(await rest(env,"profiles","select=id,username,role,balance,reserved_balance,disabled,created_at&order=created_at.desc"),200,cors(request,env));}
     if(path==="/api/admin/audit"&&method==="GET") {await requireAdmin(request,env);return reply(await rest(env,"audit_logs","select=*&order=created_at.desc&limit=200"),200,cors(request,env));}
+    if(path==="/api/admin/auto-clear"&&method==="GET") {
+      await requireAdmin(request,env);
+      return reply(await rest(env,"auto_clear_logs","select=*&order=run_at.desc&limit=100"),200,cors(request,env));
+    }
+
     m=path.match(/^\/api\/admin\/(submissions|withdrawals|robux|diamond)\/([^/]+)\/review$/);
     if(m&&method==="POST") {
       const s=await requireAdmin(request,env),b=await body(request);
@@ -540,8 +679,22 @@ async function handle(request,env) {
       if(!allowed[m[1]].includes(b.status))return fail("Status tidak valid untuk jenis pengajuan.",400,cors(request,env));
       if(b.status==="rejected"&&!String(b.note||"").trim()) return fail("Alasan penolakan wajib diisi.",400,cors(request,env));
       const rpc={submissions:["review_submission","p_submission_id"],withdrawals:["review_withdrawal","p_withdrawal_id"],robux:["review_robux_request","p_robux_request_id"],diamond:["review_diamond_request","p_diamond_request_id"]}[m[1]];
+      let proofPath=null;
+      if(m[1]==="submissions" && ["approved","rejected"].includes(b.status)) {
+        const before=(await rest(env,"submissions","id=eq."+encodeURIComponent(m[2])+"&select=id,proof_url,status"))[0];
+        if(before?.status==="pending") proofPath=before.proof_url;
+      }
       const args={ [rpc[1]]:m[2],p_status:b.status,p_note:String(b.note||"").slice(0,1000),p_admin_id:s.user.id};
       const result=await sb(env,"/rest/v1/rpc/"+rpc[0],{method:"POST",body:JSON.stringify(args)});
+      if(proofPath && m[1]==="submissions") {
+        try {
+          await storageDelete(env,"submission-proofs",proofPath);
+          await rest(env,"submissions","id=eq."+encodeURIComponent(m[2]),{method:"PATCH",headers:{Prefer:"return=minimal"},body:JSON.stringify({proof_url:null})});
+          await recordAutoClear(env,{trigger:"job_review",deleted_proof_files:1,details:{submission_id:m[2],status:b.status}});
+        } catch(e) {
+          await recordAutoClear(env,{trigger:"job_review",failures:1,details:{submission_id:m[2],status:b.status,error:String(e?.message||e).slice(0,200)}});
+        }
+      }
       await audit(env,s.user.id,"review."+m[1],{id:m[2],status:b.status});
       return reply({ok:true,item:result},200,cors(request,env));
     }
@@ -600,5 +753,8 @@ export default {
   async fetch(request,env) {
     try { return await handle(request,env); }
     catch { return fail("Internal server error",500,cors(request,env)); }
+  },
+  async scheduled(controller, env, ctx) {
+    ctx.waitUntil(runAutoClear(env));
   }
 };
