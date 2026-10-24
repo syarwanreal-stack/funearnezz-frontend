@@ -60,22 +60,34 @@ test("invalid login is returned as 401 rather than a generic 500", async () => {
   });
 });
 
+test("registration requires a valid email before calling Supabase", async () => {
+  await withFetchStub(async () => { assert.fail("Supabase must not be called for an invalid email"); }, async () => {
+    const response = await worker.fetch(request("/api/register", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ username: "member_1", email: "not-an-email", password: "Validpass123" }),
+    }), env);
+    assert.equal(response.status, 400);
+    assert.match((await response.json()).error, /email/i);
+  });
+});
+
 test("registration removes the Auth user if profile creation fails", async () => {
   const calls = [];
+  const userId = "11111111-1111-4111-8111-111111111111";
   await withFetchStub(async (url, init) => {
     calls.push({ path: url.pathname, method: init.method || "GET" });
     if (url.pathname === "/rest/v1/profiles" && (init.method || "GET") === "GET") return json([]);
-    if (url.pathname === "/auth/v1/admin/users" && init.method === "POST") return json({ id: "11111111-1111-4111-8111-111111111111" });
+    if (url.pathname === "/auth/v1/signup" && init.method === "POST") return json({ user: { id: userId, identities: [{ identity_id: "test" }] } });
     if (url.pathname === "/rest/v1/profiles" && init.method === "POST") return json({ message: "profile insert failed" }, 400);
-    if (url.pathname === "/auth/v1/admin/users/11111111-1111-4111-8111-111111111111" && init.method === "DELETE") return new Response(null, { status: 204 });
-    return json({ message: "unexpected test request" }, 500);
+    if (url.pathname === "/auth/v1/admin/users/" + userId && init.method === "DELETE") return new Response(null, { status: 204 });
+    return json({ message: "unexpected test request", path: url.pathname }, 500);
   }, async () => {
     const response = await worker.fetch(request("/api/register", {
       method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ username: "member_1", password: "Validpass123" }),
+      body: JSON.stringify({ username: "member_1", email: "member@example.com", password: "Validpass123" }),
     }), env);
     assert.equal(response.status, 400);
-    assert.ok(calls.some(x => x.method === "DELETE" && x.path.endsWith("11111111-1111-4111-8111-111111111111")), "orphan Auth user should be deleted");
+    assert.ok(calls.some(x => x.method === "DELETE" && x.path.endsWith(userId)), "orphan Auth user should be deleted");
   });
 });
 
@@ -273,13 +285,22 @@ test("admin review delegates rewards and status transitions to transactional RPC
   });
 });
 
-test("schema contract defines every RPC used by Worker and private proof storage", async () => {
+test("schema and additive PR #26 migration define all RPCs used by Worker", async () => {
   const sql = await readFile(new URL("../supabase/schema.sql", import.meta.url), "utf8");
+  const migration = await readFile(new URL("../supabase/migrations/202610240001_pr26_email_referral_diamond.sql", import.meta.url), "utf8");
   const source = await readFile(new URL("../worker.js", import.meta.url), "utf8");
   for (const rpc of ["create_withdrawal", "create_robux_request", "review_submission", "review_withdrawal", "review_robux_request", "admin_adjust_balance"]) {
     assert.match(sql, new RegExp("function public\\." + rpc + "\\s*\\("), `SQL function ${rpc} must exist`);
     assert.ok(source.includes(rpc), `Worker route must reference ${rpc}`);
   }
+  for (const rpc of ["create_diamond_request", "review_diamond_request"]) {
+    assert.match(migration, new RegExp("function public\\." + rpc + "\\s*\\("), `PR #26 migration function ${rpc} must exist`);
+    assert.ok(source.includes(rpc), `Worker route must reference ${rpc}`);
+  }
+  assert.match(migration, /referral_events_one_award_per_invitee/);
+  assert.match(migration, /email_verified_at IS NULL/i);
+  assert.match(migration, /diamond_requests/);
+  assert.doesNotMatch(migration, /DROP\\s+TABLE/i, "migration must preserve production tables");
   assert.match(sql, /submission-proofs[^;]*false/s, "proof bucket must not be public");
   assert.match(sql, /enable row level security/i);
 });
