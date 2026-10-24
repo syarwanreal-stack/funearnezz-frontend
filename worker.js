@@ -94,7 +94,7 @@ const body = async req => {
   }
   try { return await req.json(); } catch { return {}; }
 };
-const usernameOK = u => typeof u==="string" && u.length>=3 && u.length<=24 && /^[A-Za-z0-9_]+(?: [A-Za-z0-9_]+)*$/.test(u);
+const usernameOK = u => typeof u==="string" && u.length>=3 && u.length<=24 && /^[A-Za-z0-9_]+$/.test(u);
 const emailFor = u => u.toLowerCase()+"@"+AUTH_HOST;
 const safeProfile = p => p ? ({id:p.id, username:p.username, email:p.email||null, email_verified_at:p.email_verified_at||null, emailVerified:!!p.email_verified_at, referral_code:p.referral_code||null, announcement_seen_at:p.announcement_seen_at||null, role:p.role, balance:Number(p.balance||0), reserved_balance:Number(p.reserved_balance||0), created_at:p.created_at}) : null;
 async function logAuthEvent(request,env,userId,event) {
