@@ -411,7 +411,7 @@
       '<label class="field" id="robuxCountWrap" hidden><span>Jumlah Robux</span><input id="robuxCount" type="number" name="robux" min="' + esc(numberSetting(config.robuxMin, 10)) + '" step="1" placeholder="Jumlah Robux"></label>' +
       '<label class="field" id="robloxUsernameWrap" hidden><span>Username Roblox</span><input name="robloxUsername" maxlength="100" placeholder="Username Roblox"></label>' +
       '<label class="field wide" id="gamepassWrap" hidden><span>Link Game Pass</span><input name="gamepassUrl" type="url" maxlength="500" placeholder="https://www.roblox.com/..."></label>' +
-      '<label class="field" id="diamondCountWrap" hidden><span>Paket diamond FF</span><select id="diamondCount" name="diamonds" required><option value="">Pilih jumlah diamond</option>' +
+      '<label class="field" id="diamondCountWrap" hidden><span>Paket diamond FF</span><select id="diamondCount" name="diamonds"><option value="">Pilih jumlah diamond</option>' +
       [5, 12, 50, 70, 140, 355, 720, 1450, 2180, 3640, 7290].filter(function (n) { return n >= numberSetting(config.diamondMin, 1); }).map(function (n) { return '<option value="' + n + '">' + n.toLocaleString('id-ID') + ' diamond</option>'; }).join('') +
       '</select></label>' +
       '<label class="field" id="diamondUidWrap" hidden><span>UID Free Fire</span><input name="ffUid" inputmode="numeric" pattern="[0-9]{5,20}" maxlength="20" placeholder="UID Free Fire"></label>' +
