@@ -705,37 +705,75 @@
   var renderPayoutSettings = async function () {
     var result = await api('/api/admin/settings'), cfg = {};
     (result || []).forEach(function (item) { cfg[item.key] = item.value; });
-    $('#viewRoot').innerHTML = '<section class="panel"><div class="panel-heading"><div><h2>Setting metode</h2><p>Pilih metode dulu, lalu isi satu tarif atau biaya untuk metode tersebut.</p></div></div><form id="payoutForm" class="form-grid">' +
-      '<label class="field wide"><span>SETTING METODE</span><select name="method" id="payoutMethod"><option value="gamepass">Robux — Game Pass</option><option value="username">Robux — Via Username</option><option value="dana">DANA</option></select></label>' +
-      '<label class="field wide" id="payoutValueWrap"><span id="payoutLabel">HARGA PER 1 ROBUX (Rp)</span><input id="payoutValue" name="value" type="number" min="0" step="1" required></label>' +
-      '<label class="field wide"><span>Minimal Robux (berlaku untuk kedua metode Robux)</span><input id="robuxMinSetting" type="number" min="1" step="1" value="' + esc(cfg.robuxMin == null ? 10 : cfg.robuxMin) + '" required></label>' +
-      '<div class="currency-note wide" id="payoutHelp">Tarif yang disimpan akan langsung digunakan ketika request baru dibuat.</div>' +
-      '<div class="wide"><button class="button button-primary" type="submit">Simpan setting metode</button></div></form></section>';
-    var method = $('#payoutMethod'), value = $('#payoutValue'), label = $('#payoutLabel'), help = $('#payoutHelp');
-    var values = { gamepass: cfg.gamepassRate == null ? 170 : cfg.gamepassRate, username: cfg.usernameRate == null ? 230 : cfg.usernameRate, dana: cfg.danaFee == null ? 2000 : cfg.danaFee };
-    var update = function () {
-      value.value = values[method.value];
-      label.textContent = method.value === 'dana' ? 'BIAYA ADMIN DANA (Rp)' : 'HARGA ROBUX PER 1 ROBUX (Rp)';
-      help.textContent = method.value === 'dana' ? 'Biaya ini dikurangi dari nominal penarikan. Nominal saldo yang ditahan tetap sebesar jumlah yang diminta; admin mengirim nominal setelah dipotong biaya admin.' : 'Tarif per Robux dikalikan jumlah Robux untuk menghitung saldo yang akan dipotong.';
+    var rates = {
+      gamepass: cfg.gamepassRate == null ? 170 : cfg.gamepassRate,
+      username: cfg.usernameRate == null ? 230 : cfg.usernameRate,
+      diamond: cfg.diamondRate == null ? 0 : cfg.diamondRate,
+      dana: cfg.danaFee == null ? 2000 : cfg.danaFee
     };
-    method.addEventListener('change', update); update();
-    $('#payoutForm').addEventListener('submit', async function (event) {
-      event.preventDefault();
-      var button = $('button[type="submit"]', event.currentTarget), amount = Number(value.value), min = Number($('#robuxMinSetting').value);
-      if (!Number.isSafeInteger(amount) || amount < 0 || (method.value !== 'dana' && amount < 1)) { showDialog('Nominal tidak valid', 'Masukkan angka yang valid untuk metode terpilih.', { kind: 'error' }); return; }
-      if (!Number.isSafeInteger(min) || min < 1) { showDialog('Batas minimum tidak valid', 'Minimal Robux harus minimal 1.', { kind: 'error' }); return; }
-      button.disabled = true;
-      try {
-        var payload = { robuxMin: min };
-        if (method.value === 'dana') payload.danaFee = amount;
-        if (method.value === 'gamepass') payload.gamepassRate = amount;
-        if (method.value === 'username') payload.usernameRate = amount;
-        await api('/api/admin/settings', { method: 'POST', body: JSON.stringify(payload) });
-        showDialog('Setting tersimpan', 'Pengaturan metode penarikan berhasil diperbarui.', { autoMs: 3000 });
-        await renderPayoutSettings();
-      } catch (error) { showDialog('Setting gagal disimpan', error.message, { kind: 'error' }); }
-      finally { button.disabled = false; }
-    });
+    $('#viewRoot').innerHTML = '<div class="withdraw-tabs settings-tabs" id="settingsTabs" role="tablist" aria-label="Kategori setting"><span class="withdraw-tab-slider" aria-hidden="true"></span><button class="withdraw-tab active" type="button" id="settingsPayoutTab" role="tab" aria-selected="true">Penarikan</button><button class="withdraw-tab" type="button" id="settingsReferralTab" role="tab" aria-selected="false">Referral</button></div><div id="settingsPanel"></div>';
+    var panel = $('#settingsPanel');
+    var showSection = function (which) {
+      $('#settingsTabs').classList.toggle('is-dana', which === 'referral');
+      $('#settingsPayoutTab').classList.toggle('active', which === 'payout');
+      $('#settingsReferralTab').classList.toggle('active', which === 'referral');
+      $('#settingsPayoutTab').setAttribute('aria-selected', String(which === 'payout'));
+      $('#settingsReferralTab').setAttribute('aria-selected', String(which === 'referral'));
+      if (which === 'payout') {
+        panel.innerHTML = '<section class="panel"><div class="panel-heading"><div><h2>Harga dan biaya penarikan</h2><p>Pengaturan berlaku untuk permintaan baru.</p></div></div><form id="payoutForm" class="form-grid">' +
+          '<label class="field wide"><span>Jenis pengaturan</span><select name="method" id="payoutMethod"><option value="gamepass">Robux — Game Pass</option><option value="username">Robux — Via Username</option><option value="diamond">Diamond Free Fire</option><option value="dana">DANA</option></select></label>' +
+          '<label class="field wide"><span id="payoutLabel">Harga per 1 Robux (Rp)</span><input id="payoutValue" name="value" type="number" min="0" max="1000000000" step="1" required></label>' +
+          '<label class="field wide"><span>Minimum Robux</span><input id="robuxMinSetting" type="number" min="1" max="1000000" step="1" value="' + esc(cfg.robuxMin == null ? 10 : cfg.robuxMin) + '" required></label>' +
+          '<label class="field wide"><span>Minimum diamond FF</span><input id="diamondMinSetting" type="number" min="1" max="1000000" step="1" value="' + esc(cfg.diamondMin == null ? 1 : cfg.diamondMin) + '" required></label>' +
+          '<div class="currency-note wide" id="payoutHelp">Tarif yang disimpan digunakan untuk permintaan baru.</div><div class="wide"><button class="button button-primary" type="submit">Simpan setting penarikan</button></div></form></section>';
+        var method = $('#payoutMethod'), value = $('#payoutValue'), label = $('#payoutLabel'), help = $('#payoutHelp');
+        var update = function () {
+          value.value = rates[method.value];
+          label.textContent = method.value === 'dana' ? 'Biaya admin DANA (Rp)' : method.value === 'diamond' ? 'Harga per 1 diamond FF (Rp)' : 'Harga per 1 Robux (Rp)';
+          help.textContent = method.value === 'dana' ? 'Biaya dipotong dari nominal saldo yang diminta; sisa nominal dikirim ke DANA.' : method.value === 'diamond' ? 'Harga dikalikan jumlah diamond. Admin mengirim diamond secara manual setelah permintaan disetujui.' : 'Tarif per Robux dikalikan jumlah Robux.';
+        };
+        method.addEventListener('change', update); update();
+        $('#payoutForm').addEventListener('submit', async function (event) {
+          event.preventDefault();
+          var button = $('button[type="submit"]', event.currentTarget), amount = Number(value.value), minRobux = Number($('#robuxMinSetting').value), minDiamond = Number($('#diamondMinSetting').value);
+          if (!Number.isSafeInteger(amount) || amount < 0 || amount > 1000000000 || (method.value !== 'dana' && method.value !== 'diamond' && amount < 1)) { showDialog('Nominal tidak valid', 'Masukkan angka harga/biaya yang valid.', { kind: 'error' }); return; }
+          if (!Number.isSafeInteger(minRobux) || minRobux < 1 || !Number.isSafeInteger(minDiamond) || minDiamond < 1) { showDialog('Batas minimum tidak valid', 'Minimum Robux dan diamond harus minimal 1.', { kind: 'error' }); return; }
+          button.disabled = true;
+          try {
+            var payload = { robuxMin: minRobux, diamondMin: minDiamond };
+            if (method.value === 'dana') payload.danaFee = amount;
+            if (method.value === 'diamond') payload.diamondRate = amount;
+            if (method.value === 'gamepass') payload.gamepassRate = amount;
+            if (method.value === 'username') payload.usernameRate = amount;
+            await api('/api/admin/settings', { method: 'POST', body: JSON.stringify(payload) });
+            showDialog('Setting tersimpan', 'Harga dan biaya penarikan berhasil diperbarui.', { autoMs: 2500 });
+            await renderPayoutSettings();
+          } catch (error) { showDialog('Setting gagal disimpan', error.message, { kind: 'error' }); }
+          finally { button.disabled = false; }
+        });
+      } else {
+        panel.innerHTML = '<section class="panel"><div class="panel-heading"><div><h2>Reward referral</h2><p>Bonus diberikan kepada kedua pihak setelah email terverifikasi dan job pertama disetujui. Jumlah undangan tidak dibatasi.</p></div></div><form id="referralSettingsForm" class="form-grid">' +
+          '<label class="field wide"><span>Reward untuk pengundang (Rp)</span><input name="referralInviterReward" type="number" min="0" max="1000000000" step="1" value="' + esc(cfg.referralInviterReward == null ? 0 : cfg.referralInviterReward) + '" required></label>' +
+          '<label class="field wide"><span>Reward untuk pengguna baru (Rp)</span><input name="referralInviteeReward" type="number" min="0" max="1000000000" step="1" value="' + esc(cfg.referralInviteeReward == null ? 0 : cfg.referralInviteeReward) + '" required></label>' +
+          '<div class="currency-note wide">Reward masuk langsung ke saldo setelah kriteria terpenuhi. Isi 0 untuk menonaktifkan reward bagi pihak terkait.</div><div class="wide"><button class="button button-primary" type="submit">Simpan reward referral</button></div></form></section>';
+        $('#referralSettingsForm').addEventListener('submit', async function (event) {
+          event.preventDefault();
+          var form = event.currentTarget, button = $('button[type="submit"]', form), inviter = Number(form.referralInviterReward.value), invitee = Number(form.referralInviteeReward.value);
+          if (![inviter, invitee].every(function (n) { return Number.isSafeInteger(n) && n >= 0 && n <= 1000000000; })) { showDialog('Reward tidak valid', 'Reward harus berupa angka bulat nol atau lebih.', { kind: 'error' }); return; }
+          button.disabled = true;
+          try {
+            await api('/api/admin/settings', { method: 'POST', body: JSON.stringify({ referralInviterReward: inviter, referralInviteeReward: invitee }) });
+            showDialog('Reward referral tersimpan', 'Reward untuk kedua pihak berhasil diperbarui.', { autoMs: 2500 });
+            await renderPayoutSettings();
+            showSection('referral');
+          } catch (error) { showDialog('Gagal menyimpan reward', error.message, { kind: 'error' }); }
+          finally { button.disabled = false; }
+        });
+      }
+    };
+    $('#settingsPayoutTab').addEventListener('click', function () { showSection('payout'); });
+    $('#settingsReferralTab').addEventListener('click', function () { showSection('referral'); });
+    showSection('payout');
   };
   var startRequestPolling = function () {
     clearInterval(state.pollTimer);
