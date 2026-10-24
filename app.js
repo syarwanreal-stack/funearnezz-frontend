@@ -450,9 +450,9 @@
         var cost = count * rate;
         if (method === 'gamepass') {
           var passPrice = count > 0 ? Math.ceil(count / 0.70) : 0;
-          $('#withdrawCalc').textContent = 'Buat Game Pass seharga ' + passPrice + ' Robux [WAJIB]. Nominal Robux: ' + count + ' Robux. Saldo terpotong: ' + cash(cost) + ' (' + cash(rate) + ' per Robux). Potongan Roblox sekitar 30%.';
+          $('#withdrawCalc').textContent = 'Buat Game Pass seharga ' + passPrice + ' Robux [WAJIB]. Nominal Robux: ' + count + ' Robux. Saldo terpotong: ' + cash(cost) + ' (' + cash(rate) + ' per Robux).';
         } else {
-          $('#withdrawCalc').textContent = 'Tarif ' + cash(rate) + ' per Robux. ' + count + ' Robux akan memotong saldo ' + cash(cost) + '. Minimal ' + numberSetting(config.robuxMin, 10) + ' Robux.';
+          $('#withdrawCalc').textContent = 'Tarif ' + cash(rate) + ' per Robux. ' + count + ' Robux akan memotong saldo ' + cash(cost) + '. Minimal ' + numberSetting(config.robuxMin, 10) + ' Robux. Jika diminta, selesaikan verifikasi usia 16+ atau tautkan akun orang tua dan minta izin untuk menerima Robux.';
         }
       }
     };
