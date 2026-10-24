@@ -792,24 +792,49 @@
     state.pollTimer = setInterval(check, 30000);
   };
   var bindTopLevel = function () {
+    try { var refParam = new URLSearchParams(window.location.search).get('ref'); if (refParam && !$('#registerReferral').value) $('#registerReferral').value = refParam.toUpperCase().slice(0, 24); } catch (e) {}
     $('#switchAuth').addEventListener('click', function () { setAuthMode($('#registerForm').classList.contains('hidden') ? 'register' : 'login'); });
     $('#registerForm').addEventListener('submit', async function (event) {
       event.preventDefault();
-      var form = event.currentTarget, button = $('button[type="submit"]', form), username = form.username.value.trim(), password = form.password.value;
+      var form = event.currentTarget, button = $('button[type="submit"]', form), username = form.username.value.trim(), email = form.email.value.trim().toLowerCase(), password = form.password.value;
       if (password !== form.confirm.value) { authMessage('Konfirmasi password tidak sama.'); return; }
-      button.disabled = true; button.textContent = 'Membuat akun…';
+      button.disabled = true; button.textContent = 'Mengirim kode…';
       try {
-        var result = await api('/api/register', { method: 'POST', body: JSON.stringify({ username: username, password: password }) });
-        showDialog('Berhasil daftar', 'Akun berhasil dibuat. Kamu akan dialihkan ke dashboard dalam 3 detik.', { autoMs: 3000, onClose: function () { setLoggedIn(result.user); } });
+        var result = await api('/api/register', { method: 'POST', body: JSON.stringify({ username: username, email: email, password: password, referralCode: form.referralCode.value.trim() }) });
+        state.pendingEmail = email;
+        $('#verifyEmail').value = email;
+        setAuthMode('verify');
+        authMessage(result.message || 'Kode verifikasi diminta dikirim ke email kamu.');
       } catch (error) { authMessage(error.message); }
       finally { button.disabled = false; button.textContent = 'Daftar'; }
+    });
+    $('#verifyForm').addEventListener('submit', async function (event) {
+      event.preventDefault();
+      var form = event.currentTarget, button = $('button[type="submit"]', form), email = form.email.value.trim().toLowerCase(), code = form.code.value.trim();
+      button.disabled = true; button.textContent = 'Memverifikasi…';
+      try {
+        var result = await api('/api/email/verify', { method: 'POST', body: JSON.stringify({ email: email, code: code }) });
+        state.pendingEmail = '';
+        await setLoggedIn(result.user);
+        say('Email berhasil diverifikasi.');
+      } catch (error) { authMessage(error.message); }
+      finally { button.disabled = false; button.textContent = 'Verifikasi email'; }
+    });
+    $('#resendCode').addEventListener('click', async function () {
+      var email = $('#verifyEmail').value.trim().toLowerCase(), button = $('#resendCode');
+      button.disabled = true; button.textContent = 'Meminta kode…';
+      try {
+        var result = await api('/api/email/resend', { method: 'POST', body: JSON.stringify({ email: email }) });
+        authMessage(result.message || 'Kode baru diminta dikirim. Periksa inbox dan folder spam.');
+      } catch (error) { authMessage(error.message); }
+      finally { button.disabled = false; button.textContent = 'Kirim ulang kode'; }
     });
     $('#loginForm').addEventListener('submit', async function (event) {
       event.preventDefault();
       var form = event.currentTarget, button = $('button[type="submit"]', form);
       button.disabled = true; button.textContent = 'Memeriksa…';
       try {
-        var result = await api('/api/login', { method: 'POST', body: JSON.stringify({ username: form.username.value.trim(), password: form.password.value }) });
+        var result = await api('/api/login', { method: 'POST', body: JSON.stringify({ email: form.email.value.trim(), password: form.password.value }) });
         showDialog('Login berhasil', 'Kamu akan dialihkan ke dashboard dalam 3 detik.', { autoMs: 3000, onClose: function () { setLoggedIn(result.user); } });
       } catch (error) { authMessage(error.message); }
       finally { button.disabled = false; button.textContent = 'Login'; }
