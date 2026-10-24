@@ -797,7 +797,7 @@
         '<div class="button-row" style="margin-top:16px"><button id="ownerApply" type="button" class="button ' + (mode === 'addadmin' ? 'button-primary' : 'button-danger') + '" ' + (!selectedId ? 'disabled' : '') + '>' + (mode === 'addadmin' ? 'Jadikan Admin' : 'Turunkan Jadi Pengguna') + '</button><button id="ownerRefresh" type="button" class="button button-outline">Muat ulang</button></div></section>';
       $('#ownerAddMode').addEventListener('click', function () { mode = 'addadmin'; selectedId = ''; render(); });
       $('#ownerRemoveMode').addEventListener('click', function () { mode = 'unadmin'; selectedId = ''; render(); });
-      $('[data-owner-user]').forEach(function (button) { button.addEventListener('click', function () { selectedId = button.dataset.ownerUser; render(); }); });
+      $$('[data-owner-user]', root).forEach(function (button) { button.addEventListener('click', function () { selectedId = button.dataset.ownerUser; render(); }); });
       $('#ownerRefresh').addEventListener('click', async function () { try { users = await api('/api/owner/users'); selectedId = ''; render(); } catch (e) { showDialog('Gagal memuat pengguna', e.message, {kind:'error'}); } });
       $('#ownerApply').addEventListener('click', async function () {
         if (!selectedId) return;
