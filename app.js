@@ -2,18 +2,19 @@
 (function () {
   var $ = function (selector, root) { return (root || document).querySelector(selector); };
   var $$ = function (selector, root) { return Array.prototype.slice.call((root || document).querySelectorAll(selector)); };
-  var state = { user: null, view: 'dashboard', config: {}, data: {}, maintenance: null, dialogTimer: null, pendingCount: null, notificationReady: false, pollTimer: null, chatTimer: null };
+  var state = { user: null, view: 'dashboard', config: {}, data: {}, maintenance: null, dialogTimer: null, pendingCount: null, notificationReady: false, pollTimer: null, chatTimer: null, maintenanceTimer: null, pendingEmail: '' };
   var viewMeta = {
     dashboard: ['RUANG KAMU', 'Dashboard', 'Pantau saldo dan tugas yang tersedia.'],
     history: ['AKTIVITAS', 'Riwayat', 'Catatan saldo masuk, saldo keluar, dan status pengajuan.'],
-    withdraw: ['PENARIKAN', 'Withdraw', 'Pilih DANA atau Robux, lalu cek potongan saldo sebelum mengirim.'],
+    withdraw: ['PENARIKAN', 'Withdraw', 'Pilih DANA, Robux, atau diamond Free Fire.'],
+    referral: ['REWARD', 'Referral', 'Undang teman dan dapatkan bonus setelah teman memverifikasi email dan menyelesaikan job pertamanya.'],
     chat: ['KOMUNITAS', 'Global Chat', 'Berbagi info dengan sopan. Promosi dan spam tidak diperbolehkan.'],
     maintenance: ['PENGATURAN ADMIN', 'Maintenance Menu', 'Kelola maintenance dan pengumuman untuk semua pengguna.'],
     requests: ['ANTREAN ADMIN', 'Request Withdraw', 'Request DANA dan Robux tampil bersama dalam satu antrean.'],
     codes: ['REWARD ADMIN', 'Create Unickcode', 'Buat kode saldo dengan batas jumlah penerima.'],
     'create-job': ['TUGAS ADMIN', 'Create Job', 'Buat tugas dengan reward, link, kuota, dan pengaturan bukti foto.'],
     'review-jobs': ['ANTREAN JOB', 'Review Job', 'Periksa bukti kerja dan setujui reward atau tolak dengan alasan.'],
-    'payout-settings': ['PENGATURAN ADMIN', 'Setting Penarikan', 'Atur tarif Robux dan biaya admin DANA.']
+    'payout-settings': ['PENGATURAN ADMIN', 'Setting UATS', 'Atur tarif penarikan dan reward referral.']
   };
   var cash = function (value) {
     var n = Number(value || 0);
@@ -196,7 +197,7 @@
   var navigate = async function (view) {
     if (!viewMeta[view]) view = 'dashboard';
     if (!state.user) return;
-    if (view !== 'dashboard' && view !== 'history' && view !== 'withdraw' && view !== 'chat' && state.user.role !== 'admin') {
+    if (view !== 'dashboard' && view !== 'history' && view !== 'withdraw' && view !== 'chat' && view !== 'referral' && state.user.role !== 'admin') {
       showDialog('Akses dibatasi', 'Menu ini khusus admin.', { kind: 'error' });
       return;
     }
@@ -213,6 +214,7 @@
       if (view === 'dashboard') await renderDashboard();
       else if (view === 'history') await renderHistory();
       else if (view === 'withdraw') await renderWithdraw();
+      else if (view === 'referral') await renderReferral();
       else if (view === 'chat') await renderChat();
       else if (view === 'maintenance') await renderMaintenance();
       else if (view === 'requests') await renderRequests();
@@ -249,10 +251,9 @@
     return '<span class="status ' + info[1] + '">' + info[2] + ' ' + info[0] + '</span>';
   };
   var renderDashboard = async function () {
-    var result = await api('/api/dashboard');
+    var loaded = await Promise.all([api('/api/dashboard'), api('/api/jobs'), api('/api/wallet')]);
+    var result = loaded[0], jobs = loaded[1], wallet = loaded[2];
     state.user = result.user || state.user;
-    var jobs = await api('/api/jobs');
-    var wallet = await api('/api/wallet');
     $('#headerBalance').textContent = cash(wallet.balance == null ? state.user.balance : wallet.balance);
     var jobHtml = (Array.isArray(jobs) ? jobs : []).map(function (job) {
       return '<article class="job-card"><div class="card-top"><div><h3>' + esc(job.title) + '</h3><p>' + esc(job.description || 'Ikuti instruksi job yang tersedia.') + '</p></div><span class="tag reward">+' + cash(job.reward) + '</span></div><div class="tag-list"><span class="tag">Kuota ' + esc(job.quota_used || 0) + '/' + esc(job.quota == null ? '∞' : job.quota) + '</span><span class="tag">' + (job.photo_required ? 'Foto bukti wajib' : 'Foto bukti opsional') + '</span></div>' +
