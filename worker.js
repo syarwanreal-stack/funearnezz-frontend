@@ -13,6 +13,7 @@
  * settings(key, value), audit_logs(id, actor_id, action, details, created_at).
  */
 const COOKIE = "fe_session";
+const REFRESH_COOKIE = "fe_refresh";
 const AUTH_HOST = "users.funearnezz.invalid";
 const cors = (request, env) => {
   const origin = request.headers.get("Origin");
@@ -32,12 +33,15 @@ const cors = (request, env) => {
   }
   return headers;
 };
-const reply = (data, status=200, headers={}) => new Response(JSON.stringify(data), {
-  status, headers: { "content-type":"application/json; charset=utf-8", "cache-control":"no-store", ...headers }
-});
+const reply = (data, status=200, headers={}) => {
+  const out = headers instanceof Headers ? headers : new Headers(headers||{});
+  if (!out.has("content-type")) out.set("content-type","application/json; charset=utf-8");
+  if (!out.has("cache-control")) out.set("cache-control","no-store");
+  return new Response(JSON.stringify(data),{status,headers:out});
+};
 const fail = (message, status=400, headers={}) => reply({error:message}, status, headers);
-const cookie = (value, maxAge=60*60) => `${COOKIE}=${value}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=${Math.max(0,Math.floor(maxAge))}`;
-const parseCookies = (request) => Object.fromEntries((request.headers.get("Cookie")||"").split(";").map(x=>x.trim()).filter(Boolean).map(x=>{const i=x.indexOf("=");return [x.slice(0,i),x.slice(i+1)];}));
+const cookie = (value, maxAge=60*60, name=COOKIE) => `${name}=${encodeURIComponent(value||"")}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=${Math.max(0,Math.floor(maxAge))}`;
+const parseCookies = (request) => Object.fromEntries((request.headers.get("Cookie")||"").split(";").map(x=>x.trim()).filter(Boolean).map(x=>{const i=x.indexOf("=");return [x.slice(0,i),decodeURIComponent(x.slice(i+1))];}));
 const sb = async (env, path, init={}) => {
   const base = env.SUPABASE_URL.replace(/\/$/,"");
   const serverKey = env.SUPABASE_SERVICE_ROLE_KEY;
@@ -93,6 +97,26 @@ const body = async req => {
 const usernameOK = u => typeof u==="string" && /^[A-Za-z0-9_]{3,24}$/.test(u);
 const emailFor = u => u.toLowerCase()+"@"+AUTH_HOST;
 const safeProfile = p => p ? ({id:p.id, username:p.username, email:p.email||null, email_verified_at:p.email_verified_at||null, emailVerified:!!p.email_verified_at, referral_code:p.referral_code||null, announcement_seen_at:p.announcement_seen_at||null, role:p.role, balance:Number(p.balance||0), reserved_balance:Number(p.reserved_balance||0), created_at:p.created_at}) : null;
+async function verifyCaptcha(request, env, token) {
+  if (!env.TURNSTILE_SECRET_KEY || !env.TURNSTILE_SITE_KEY) throw Object.assign(new Error("CAPTCHA belum dikonfigurasi admin. Silakan coba lagi nanti."),{status:503});
+  if (!token || typeof token !== "string") throw Object.assign(new Error("Selesaikan CAPTCHA 'Saya bukan robot' terlebih dahulu."),{status:400});
+  const form=new URLSearchParams({secret:env.TURNSTILE_SECRET_KEY,response:token});
+  const ip=request.headers.get("CF-Connecting-IP"); if(ip) form.set("remoteip",ip);
+  const response=await fetch("https://challenges.cloudflare.com/turnstile/v0/siteverify",{method:"POST",headers:{"Content-Type":"application/x-www-form-urlencoded"},body:form});
+  const result=await response.json().catch(()=>({success:false}));
+  if(!response.ok||!result.success) throw Object.assign(new Error("CAPTCHA gagal atau kedaluwarsa. Centang CAPTCHA lagi."),{status:403});
+}
+async function logAuthEvent(request,env,userId,event) {
+  const ip=request.headers.get("CF-Connecting-IP")||"", userAgent=(request.headers.get("User-Agent")||"").slice(0,500);
+  try { await rest(env,"login_security_events","",{method:"POST",headers:{Prefer:"return=minimal"},body:JSON.stringify({user_id:userId,event,ip_address:ip||null,user_agent:userAgent||null})}); }
+  catch(e) { await audit(env,userId,"security.auth_log_failed",{event}); }
+}
+const sessionHeaders=(base,data)=>{
+  const headers=new Headers(base||{});
+  headers.append("Set-Cookie",cookie(data?.access_token||data?.session?.access_token||"",Math.min(86400,Math.max(60,Number(data?.expires_in)||3600)),COOKIE));
+  headers.append("Set-Cookie",cookie(data?.refresh_token||data?.session?.refresh_token||"",60*60*24*60,REFRESH_COOKIE));
+  return headers;
+};
 async function current(request, env) {
   const token = parseCookies(request)[COOKIE] || (request.headers.get("Authorization")||"").replace(/^Bearer\s+/i,"");
   if (!token) return null;
@@ -169,6 +193,7 @@ async function handle(request,env) {
     }
     if((path==="/api/register"||path==="/api/auth/register")&&method==="POST") {
       const b=await body(request), username=String(b.username||"").trim(), email=String(b.email||"").trim().toLowerCase(), password=String(b.password||"");
+      await verifyCaptcha(request,env,b.captchaToken);
       const referralCode=String(b.referralCode||b.referral_code||"").trim().toUpperCase();
       if(!usernameOK(username)) return fail("Username harus 3–24 karakter (huruf, angka, underscore)",400,cors(request,env));
       if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return fail("Masukkan alamat email yang valid.",400,cors(request,env));
@@ -179,6 +204,11 @@ async function handle(request,env) {
       if(referralCode) {
         const inviter=(await rest(env,"profiles","referral_code=eq."+encodeURIComponent(referralCode)+"&select=id"))[0];
         if(!inviter) return fail("Kode referral tidak ditemukan.",400,cors(request,env));
+        const signupIp=request.headers.get("CF-Connecting-IP")||"";
+        if(signupIp) {
+          const sameIp=await rest(env,"login_security_events","user_id=eq."+encodeURIComponent(inviter.id)+"&ip_address=eq."+encodeURIComponent(signupIp)+"&select=id&limit=1");
+          if(sameIp.length) return fail("Kode referral tidak dapat digunakan dari IP yang sama. Ini untuk mencegah referral ganda dari akun samaran.",409,cors(request,env));
+        }
         referredBy=inviter.id;
       }
       const created=await sb(env,"/auth/v1/signup",{method:"POST",body:JSON.stringify({email,password,data:{username}})});
@@ -198,6 +228,7 @@ async function handle(request,env) {
         throw profileError;
       }
       await audit(env,authUser.id,"account.registration_requested",{email,hasReferral:!!referredBy});
+      await logAuthEvent(request,env,authUser.id,"register");
       return reply({ok:true,needsVerification:true,email,message:"Kode verifikasi telah diminta dikirim ke email kamu. Masukkan kode tersebut untuk mengaktifkan akun."},201,cors(request,env));
     }
     if((path==="/api/email/verify"||path==="/api/auth/verify-email")&&method==="POST") {
@@ -212,7 +243,7 @@ async function handle(request,env) {
       if(!profile) profile=(await rest(env,"profiles","id=eq."+encodeURIComponent(authUser.id)+"&select=*"))[0];
       if(!profile||profile.disabled) return fail("Profil akun tidak tersedia.",403,cors(request,env));
       await audit(env,authUser.id,"account.email_verified",{});
-      return reply({ok:true,user:safeProfile(profile),message:"Email berhasil diverifikasi."},200,{...cors(request,env),"Set-Cookie":cookie(accessToken,Math.min(86400,Math.max(60,Number(verified.expires_in)||3600)))});
+      return reply({ok:true,user:safeProfile(profile),message:"Email berhasil diverifikasi."},200,sessionHeaders(cors(request,env),verified));
     }
     if((path==="/api/email/resend"||path==="/api/auth/resend-verification")&&method==="POST") {
       const b=await body(request), email=String(b.email||"").trim().toLowerCase();
@@ -222,15 +253,23 @@ async function handle(request,env) {
     }
     if((path==="/api/login"||path==="/api/auth/login")&&method==="POST") {
       const b=await body(request), identifier=String(b.email||b.username||"").trim(), password=String(b.password||"");
+      await verifyCaptcha(request,env,b.captchaToken);
       if(!identifier||!password) return fail("Email atau password salah",401,cors(request,env));
       // Keep legacy username-only accounts accessible while new registrations require email.
       const loginEmail=identifier.includes("@")?identifier.toLowerCase():emailFor(identifier);
       const data=await sb(env,"/auth/v1/token?grant_type=password",{method:"POST",body:JSON.stringify({email:loginEmail,password})});
       const rows=await rest(env,"profiles","id=eq."+encodeURIComponent(data.user.id)+"&select=*");
       if(!rows[0]||rows[0].disabled) return fail("Akun tidak ditemukan atau dinonaktifkan",403,cors(request,env));
-      return reply({ok:true,user:safeProfile(rows[0])},200,{...cors(request,env),"Set-Cookie":cookie(data.access_token,Math.min(86400,Math.max(60,Number(data.expires_in)||3600)))});
+      await logAuthEvent(request,env,data.user.id,"login");
+      return reply({ok:true,user:safeProfile(rows[0])},200,sessionHeaders(cors(request,env),data));
     }
-    if((path==="/api/logout"||path==="/api/auth/logout")&&method==="POST") return reply({ok:true},200,{...cors(request,env),"Set-Cookie":cookie("",0)});
+    if(path==="/api/session/refresh"&&method==="POST") {
+      const refreshToken=parseCookies(request)[REFRESH_COOKIE];
+      if(!refreshToken) { const headers=new Headers(cors(request,env)); headers.append("Set-Cookie",cookie("",0,COOKIE)); headers.append("Set-Cookie",cookie("",0,REFRESH_COOKIE)); return fail("Sesi berakhir. Silakan login kembali.",401,headers); }
+      try { const refreshed=await sb(env,"/auth/v1/token?grant_type=refresh_token",{method:"POST",body:JSON.stringify({refresh_token:refreshToken})}); return reply({ok:true},200,sessionHeaders(cors(request,env),refreshed)); }
+      catch(e) { const headers=new Headers(cors(request,env)); headers.append("Set-Cookie",cookie("",0,COOKIE)); headers.append("Set-Cookie",cookie("",0,REFRESH_COOKIE)); return fail("Sesi berakhir. Silakan login kembali.",401,headers); }
+    }
+    if((path==="/api/logout"||path==="/api/auth/logout")&&method==="POST") { const headers=new Headers(cors(request,env)); headers.append("Set-Cookie",cookie("",0,COOKIE)); headers.append("Set-Cookie",cookie("",0,REFRESH_COOKIE)); return reply({ok:true},200,headers); }
     if(path==="/api/me"&&method==="GET") {const s=await requireUser(request,env);return reply({user:safeProfile(s.profile)},200,cors(request,env));}
     if(path==="/api/config"&&method==="GET") {
       const keys=["robuxMin","gamepassRate","usernameRate","danaFee","diamondRate","diamondMin","referralInviterReward","referralInviteeReward","announcementEnabled","announcementTitle","announcementMessage","announcementUpdatedAt"];
@@ -245,7 +284,7 @@ async function handle(request,env) {
       if(settings.diamondMin==null) settings.diamondMin=1;
       if(settings.referralInviterReward==null) settings.referralInviterReward=0;
       if(settings.referralInviteeReward==null) settings.referralInviteeReward=0;
-      return reply({captchaRequired:false,settings},200,cors(request,env));
+      return reply({captchaRequired:true,captchaSiteKey:env.TURNSTILE_SITE_KEY||"",settings},200,cors(request,env));
     }
     if(path==="/api/announcement/seen"&&method==="POST") {
       const s=await requireUser(request,env);
