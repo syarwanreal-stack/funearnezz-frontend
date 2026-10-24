@@ -12,7 +12,10 @@ test("initial route is a full-screen registration/login screen without branded l
   assert.match(html, /name="username"/);
   assert.doesNotMatch(html, /id="hero"|class="brand"|FunEarnEzz|YukSetorWA/i);
   assert.match(html, /name="confirm"/);
-  assert.doesNotMatch(html, /name="email"|name="referral"/i);
+  assert.match(html, /name="email"/i);
+  assert.match(html, /name="referralCode"/i);
+  assert.match(html, /id="verifyForm"/);
+  assert.match(html, /id="openVerify"/);
 });
 
 test("the dashboard uses a hamburger drawer and separates user and admin views", async () => {
@@ -39,15 +42,33 @@ test("frontend includes clear dialogs and the required user workflows", async ()
   assert.match(app, /var \$\$ = function \(selector, root\).*querySelectorAll/);
 });
 
-test("withdrawal UI separates DANA and Robux into selectable tabs", async () => {
+test("withdrawal UI separates DANA, Robux and diamond FF into sliding tabs", async () => {
   const app = await read("app.js");
   const css = await read("style.css");
   assert.match(app, /data-withdraw-tab="robux"/);
   assert.match(app, /data-withdraw-tab="dana"/);
+  assert.match(app, /data-withdraw-tab="diamond"/);
   assert.match(app, /id="withdrawType" name="type" type="hidden" value="robux"/);
   assert.match(app, /\$\$\('\[data-withdraw-tab\]'\)\.forEach/);
-  assert.match(css, /\.withdraw-tabs\{display:grid/);
+  assert.match(css, /\.withdraw-tabs\{[^}]*display:grid/);
+  assert.match(css, /\.withdraw-tabs\.is-diamond/);
   assert.match(css, /\.withdraw-tab\.active/);
+});
+
+test("UATS supports tariff settings and referral/diamond routes are wired", async () => {
+  const app = await read("app.js");
+  const worker = await read("worker.js");
+  const migration = await read("supabase/migrations/202610240001_pr26_email_referral_diamond.sql");
+  for (const phrase of ["Setting UATS", "referralSettingsForm", "diamondRate", "referralInviterReward", "referralInviteeReward"]) {
+    assert.ok(app.includes(phrase), "missing UATS feature " + phrase);
+  }
+  for (const phrase of ['path==="/api/email/verify"', 'path==="/api/email/resend"', 'path==="/api/referral"', 'path==="/api/diamond"&&method==="POST"', 'path==="/api/admin/diamond"&&method==="GET"', "review_diamond_request", "announcement_seen_at"]) {
+    assert.ok(worker.includes(phrase), "missing Worker route " + phrase);
+  }
+  assert.match(migration, /referral_events_one_award_per_invitee/);
+  assert.match(migration, /create or replace function public\.create_diamond_request/);
+  assert.match(migration, /create or replace function public\.review_diamond_request/);
+  assert.doesNotMatch(migration, /DROP\s+TABLE/i);
 });
 
 test("worker has authenticated chat moderation, code redemption and combined queue support routes", async () => {
