@@ -326,7 +326,7 @@
     var requests = [];
     (history.withdrawals || []).forEach(function (item) { requests.push({ type: 'DANA', created_at: item.created_at, amount: item.amount, payout: item.payout_amount, fee: item.fee_amount, method: item.method, status: item.status, note: item.review_note, id: item.id }); });
     (history.robux || []).forEach(function (item) { requests.push({ type: 'ROBUX', created_at: item.created_at, amount: item.cost, details: item.robux + ' Robux · ' + item.method + ' · ' + item.username, status: item.status, note: item.review_note, id: item.id }); });
-    (history.diamonds || []).forEach(function (item) { requests.push({ type: 'DIAMOND FF', created_at: item.created_at, amount: item.cost, details: item.diamonds + ' diamond · UID ' + item.ff_uid + (item.ff_server_id ? ' · Server ' + item.ff_server_id : ''), status: item.status, note: item.review_note, id: item.id }); });
+    (history.diamonds || []).forEach(function (item) { requests.push({ type: 'DIAMOND FF', created_at: item.created_at, amount: item.cost, details: item.diamonds + ' diamond · UID ' + item.ff_uid, status: item.status, note: item.review_note, id: item.id }); });
     requests.sort(function (a, b) { return new Date(b.created_at) - new Date(a.created_at); });
     var requestHtml = requests.map(function (item) {
       var status = statusFor(item.status);
@@ -350,7 +350,7 @@
     var rows = [];
     requests.withdrawals.forEach(function (item) { rows.push({ kind: 'DANA', amount: item.amount, payout: item.payout_amount, fee: item.fee_amount, status: item.status, at: item.created_at, note: item.review_note, details: item.destination }); });
     requests.robux.forEach(function (item) { rows.push({ kind: 'ROBUX', amount: item.cost, status: item.status, at: item.created_at, note: item.review_note, details: item.robux + ' Robux · ' + item.method + ' · ' + item.username }); });
-    (requests.diamonds || []).forEach(function (item) { rows.push({ kind: 'DIAMOND FF', amount: item.cost, status: item.status, at: item.created_at, note: item.review_note, details: item.diamonds + ' diamond · UID ' + item.ff_uid + (item.ff_server_id ? ' · Server ' + item.ff_server_id : '') }); });
+    (requests.diamonds || []).forEach(function (item) { rows.push({ kind: 'DIAMOND FF', amount: item.cost, status: item.status, at: item.created_at, note: item.review_note, details: item.diamonds + ' diamond · UID ' + item.ff_uid }); });
     rows.sort(function (a, b) { return new Date(b.at) - new Date(a.at); });
     var requestHtml = rows.map(function (item) {
       return '<article class="history-row"><div class="card-top"><div><strong>' + esc(item.kind) + ' · potong ' + cash(item.amount) + '</strong><p class="subtle">' + esc(date(item.at)) + '</p></div>' + statusTag(item.status) + '</div><p class="subtle">' + esc(item.details || '') + '</p>' +
@@ -370,9 +370,11 @@
       '<label class="field" id="robuxCountWrap" hidden><span>Jumlah Robux</span><input id="robuxCount" type="number" name="robux" min="' + esc(numberSetting(config.robuxMin, 10)) + '" step="1" placeholder="Jumlah Robux"></label>' +
       '<label class="field" id="robloxUsernameWrap" hidden><span>Username Roblox</span><input name="robloxUsername" maxlength="100" placeholder="Username Roblox"></label>' +
       '<label class="field wide" id="gamepassWrap" hidden><span>Link Game Pass</span><input name="gamepassUrl" type="url" maxlength="500" placeholder="https://www.roblox.com/..."></label>' +
-      '<label class="field" id="diamondCountWrap" hidden><span>Jumlah diamond FF</span><input id="diamondCount" name="diamonds" type="number" min="' + esc(numberSetting(config.diamondMin, 1)) + '" step="1" placeholder="Jumlah diamond"></label>' +
+      '<label class="field" id="diamondCountWrap" hidden><span>Paket diamond FF</span><select id="diamondCount" name="diamonds" required><option value="">Pilih jumlah diamond</option>' +
+      [5, 12, 50, 70, 140, 355, 720, 1450, 2180, 3640, 7290].filter(function (n) { return n >= numberSetting(config.diamondMin, 1); }).map(function (n) { return '<option value="' + n + '">' + n.toLocaleString('id-ID') + ' diamond</option>'; }).join('') +
+      '</select></label>' +
       '<label class="field" id="diamondUidWrap" hidden><span>UID Free Fire</span><input name="ffUid" inputmode="numeric" pattern="[0-9]{5,20}" maxlength="20" placeholder="UID Free Fire"></label>' +
-      '<label class="field" id="diamondServerWrap" hidden><span>Server/region (opsional)</span><input name="serverId" maxlength="32" placeholder="ID server jika diperlukan"></label>' +
+      
       '<div class="currency-note wide" id="withdrawCalc">Biaya admin DANA saat ini: ' + cash(fee) + '. Nominal ini ditampilkan sebelum request dikirim.</div>' +
       '<div class="wide"><button class="button button-primary full" type="submit">Kirim request withdraw</button></div></form></section>' +
       '<section class="panel"><div class="panel-heading"><div><h2>Riwayat withdraw</h2><p>Status diperbarui setelah admin memproses request.</p></div></div><div class="stack">' + (requestHtml || '<div class="empty-state">Belum ada request withdraw.</div>') + '</div></section>';
@@ -397,7 +399,7 @@
       $('#gamepassWrap').hidden = type !== 'robux' || method !== 'gamepass';
       $('#diamondCountWrap').hidden = type !== 'diamond';
       $('#diamondUidWrap').hidden = type !== 'diamond';
-      $('#diamondServerWrap').hidden = type !== 'diamond';
+
       if (type === 'dana') {
         var payout = amount - fee;
         $('#withdrawCalc').textContent = 'Biaya admin DANA saat ini ' + cash(fee) + '. Saldo dipotong ' + cash(amount) + '; estimasi diterima ' + cash(Math.max(0, payout)) + '.';
@@ -433,7 +435,7 @@
           if (!Number.isSafeInteger(diamonds) || diamonds < numberSetting(config.diamondMin, 1)) throw new Error('Jumlah diamond di bawah batas minimum.');
           if (numberSetting(config.diamondRate, 0) < 1) throw new Error('Harga diamond FF belum diatur admin.');
           if (!/^\d{5,20}$/.test(form.ffUid.value.trim())) throw new Error('UID Free Fire harus berupa 5–20 angka.');
-          await api('/api/diamond', { method: 'POST', body: JSON.stringify({ diamonds: diamonds, ffUid: form.ffUid.value.trim(), serverId: form.serverId.value.trim() }) });
+          await api('/api/diamond', { method: 'POST', body: JSON.stringify({ diamonds: diamonds, ffUid: form.ffUid.value.trim() }) });
         } else {
           var robux = Number(form.robux.value);
           var methodName = form.elements.namedItem('method').value;
@@ -562,7 +564,7 @@
       var methodText = item.kind === 'dana' ? 'DANA' : item.kind === 'diamond' ? 'DIAMOND FREE FIRE' : 'ROBUX · ' + (item.method === 'gamepass' ? 'Game Pass' : 'Username');
       var debit = item.kind === 'dana' ? item.amount : item.cost;
       var payout = item.kind === 'dana' ? item.payout_amount : null;
-      var detail = item.kind === 'dana' ? 'Tujuan: ' + item.destination : item.kind === 'diamond' ? 'UID Free Fire: ' + item.ff_uid + (item.ff_server_id ? ' · Server: ' + item.ff_server_id : '') : 'Username Roblox: ' + item.username + (item.method === 'gamepass' ? ' · Game Pass: ' + item.gamepass_url : '');
+      var detail = item.kind === 'dana' ? 'Tujuan: ' + item.destination : item.kind === 'diamond' ? 'UID Free Fire: ' + item.ff_uid : 'Username Roblox: ' + item.username + (item.method === 'gamepass' ? ' · Game Pass: ' + item.gamepass_url : '');
       return '<article class="request-card"><div class="card-top"><div><h3>' + esc(methodText) + '</h3><p>@' + esc(users[item.user_id] || 'user') + ' · ' + esc(date(item.created_at)) + '</p></div>' + statusTag(item.status) + '</div>' +
       '<div class="request-meta"><div><small>Saldo dipotong</small><strong>' + cash(debit) + '</strong></div><div><small>' + (item.kind === 'dana' ? 'Dana dikirim' : item.kind === 'diamond' ? 'Jumlah diamond' : 'Jumlah Robux') + '</small><strong>' + (item.kind === 'dana' ? cash(payout == null ? debit : payout) : item.kind === 'diamond' ? esc(item.diamonds + ' diamond') : esc(item.robux + ' Robux')) + '</strong></div></div>' +
       (item.kind === 'dana' ? '<p>' + esc(detail) + ' · Biaya admin ' + cash(item.fee_amount || Math.max(0, Number(debit) - Number(payout == null ? debit : payout))) + '</p>' : '<p>' + esc(detail) + '<br>Tarif: ' + cash(item.rate) + (item.kind === 'diamond' ? ' per diamond' : ' per Robux') + '</p>') +
