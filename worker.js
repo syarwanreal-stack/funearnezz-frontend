@@ -55,7 +55,7 @@ const sb = async (env, path, init={}) => {
   if (!isAuthEndpoint && (serverKey.match(/\./g) || []).length === 2) authHeaders.Authorization = `Bearer ${serverKey}`;
   const res = await fetch(base + path, { ...init, headers: {
     ...authHeaders,
-    "Content-Type":"application/json",
+    ...(init.body !== undefined ? {"Content-Type":"application/json"} : {}),
     ...(init.headers||{})
   }});
   const raw = await res.text();
@@ -73,7 +73,7 @@ const sbAdmin = async (env, path, init={}) => {
   if ((serverKey.match(/\./g) || []).length === 2) headers.Authorization = `Bearer ${serverKey}`;
   const res = await fetch(base + path, { ...init, headers: {
     ...headers,
-    "Content-Type":"application/json",
+    ...(init.body !== undefined ? {"Content-Type":"application/json"} : {}),
     ...(init.headers||{})
   }});
   const raw = await res.text();
@@ -127,6 +127,11 @@ async function requireUser(request,env) {
 async function requireAdmin(request,env) {
   const session=await requireUser(request,env);
   if(session.profile.role!=="admin") throw Object.assign(new Error("Akses admin ditolak"),{status:403});
+  return session;
+}
+async function requireOwner(request,env) {
+  const session=await requireUser(request,env);
+  if(String(session.profile.username||"").trim().toLowerCase()!=="wann") throw Object.assign(new Error("Owner Panel hanya dapat diakses oleh owner."),{status:403});
   return session;
 }
 async function requireStaff(request,env) {
@@ -665,6 +670,23 @@ async function handle(request,env) {
     if(path==="/api/admin/withdrawals"&&method==="GET") {await requireAdmin(request,env);return reply(await rest(env,"withdrawals","select=*&order=created_at.desc"),200,cors(request,env));}
     if(path==="/api/admin/robux"&&method==="GET") {await requireAdmin(request,env);return reply(await rest(env,"robux_requests","select=*&order=created_at.desc"),200,cors(request,env));}
     if(path==="/api/admin/diamond"&&method==="GET") {await requireAdmin(request,env);return reply(await rest(env,"diamond_requests","select=*&order=created_at.desc"),200,cors(request,env));}
+    if(path==="/api/owner/users"&&method==="GET") {
+      await requireOwner(request,env);
+      return reply(await rest(env,"profiles","select=id,username,role,disabled,created_at&order=username.asc"),200,cors(request,env));
+    }
+    m=path.match(/^\/api\/owner\/users\/([^/]+)\/role$/);
+    if(m&&method==="POST") {
+      const owner=await requireOwner(request,env), b=await body(request);
+      const targetId=decodeURIComponent(m[1]);
+      if(!["admin","user"].includes(b.role)) return fail("Role tidak valid.",400,cors(request,env));
+      if(targetId===owner.user.id) return fail("Role akun owner tidak dapat diubah dari Owner Panel.",400,cors(request,env));
+      const target=(await rest(env,"profiles","id=eq."+encodeURIComponent(targetId)+"&select=id,username,role"))[0];
+      if(!target) return fail("Pengguna tidak ditemukan.",404,cors(request,env));
+      if(target.role===b.role) return fail("Role pengguna sudah sesuai.",409,cors(request,env));
+      const updated=await rest(env,"profiles","id=eq."+encodeURIComponent(targetId),{method:"PATCH",headers:{Prefer:"return=representation"},body:JSON.stringify({role:b.role})});
+      await audit(env,owner.user.id,b.role==="admin"?"owner.add_admin":"owner.remove_admin",{target_id:targetId,target_username:target.username,previous_role:target.role,new_role:b.role});
+      return reply({ok:true,user:{id:updated?.[0]?.id||target.id,username:updated?.[0]?.username||target.username,role:updated?.[0]?.role||b.role}},200,cors(request,env));
+    }
     if(path==="/api/admin/users"&&method==="GET") {await requireAdmin(request,env);return reply(await rest(env,"profiles","select=id,username,role,balance,reserved_balance,disabled,created_at&order=created_at.desc"),200,cors(request,env));}
     if(path==="/api/admin/audit"&&method==="GET") {await requireAdmin(request,env);return reply(await rest(env,"audit_logs","select=*&order=created_at.desc&limit=200"),200,cors(request,env));}
     if(path==="/api/admin/auto-clear"&&method==="GET") {

@@ -15,7 +15,8 @@
     'create-job': ['TUGAS ADMIN', 'Create Job', 'Buat tugas dengan reward, link, kuota, dan pengaturan bukti foto.'],
     'review-jobs': ['ANTREAN JOB', 'Review Job', 'Periksa bukti kerja dan setujui reward atau tolak dengan alasan.'],
     'auto-clear': ['PEMELIHARAAN', 'Laporan Auto Clear', 'Lihat data dan file yang dibersihkan otomatis.'],
-    'payout-settings': ['PENGATURAN ADMIN', 'Setting UATS', 'Atur tarif penarikan dan reward referral.']
+    'payout-settings': ['PENGATURAN ADMIN', 'Setting UATS', 'Atur tarif penarikan dan reward referral.'],
+    'owner-panel': ['KHUSUS OWNER', 'OWNER PANEL', 'Kelola akses admin dengan memilih akun pengguna.']
   };
   var cash = function (value) {
     var n = Number(value || 0);
@@ -146,6 +147,7 @@
     $('#headerAvatar').textContent = String(user.username || 'U').slice(0, 1).toUpperCase();
     $('#drawerRole').textContent = user.role === 'admin' ? 'Administrator' : user.role === 'staff' ? 'Staff' : 'Pengguna';
     $('#adminNav').classList.toggle('hidden', user.role !== 'admin');
+    $('#ownerNav').classList.toggle('hidden', String(user.username || '').trim().toLowerCase() !== 'wann');
     startRequestPolling();
     clearInterval(state.maintenanceTimer);
     applyMaintenance().then(showAnnouncement);
@@ -229,7 +231,9 @@
   var navigate = async function (view) {
     if (!viewMeta[view]) view = 'dashboard';
     if (!state.user) return;
-    if (view !== 'dashboard' && view !== 'history' && view !== 'withdraw' && view !== 'chat' && view !== 'referral' && state.user.role !== 'admin') {
+    var isOwner = String(state.user.username || '').trim().toLowerCase() === 'wann';
+    if (view === 'owner-panel' && !isOwner) { showDialog('Akses dibatasi', 'OWNER PANEL hanya untuk wann.', { kind: 'error' }); return; }
+    if (view !== 'dashboard' && view !== 'history' && view !== 'withdraw' && view !== 'chat' && view !== 'referral' && view !== 'owner-panel' && state.user.role !== 'admin') {
       showDialog('Akses dibatasi', 'Menu ini khusus admin.', { kind: 'error' });
       return;
     }
@@ -255,6 +259,7 @@
       else if (view === 'review-jobs') await renderJobReviews();
       else if (view === 'auto-clear') await renderAutoClear();
       else if (view === 'payout-settings') renderPayoutSettings();
+      else if (view === 'owner-panel') await renderOwnerPanel();
     } catch (error) {
       $('#viewRoot').innerHTML = '<div class="panel"><div class="empty-state"><b>Data belum dapat dimuat</b>' + esc(error.message) + '</div><button id="retryLoad" class="button button-outline" type="button">Coba lagi</button></div>';
       $('#retryLoad').addEventListener('click', function () { navigate(view); });
@@ -772,6 +777,41 @@
       } catch (error) { showDialog('Job gagal dibuat', error.message, { kind: 'error' }); }
       finally { button.disabled = false; }
     });
+  };
+  var renderOwnerPanel = async function () {
+    var users = await api('/api/owner/users');
+    var mode = 'addadmin';
+    var selectedId = '';
+    var root = $('#viewRoot');
+    var render = function () {
+      var eligible = (Array.isArray(users) ? users : []).filter(function (u) {
+        if (String(u.username || '').trim().toLowerCase() === 'wann') return false;
+        return mode === 'addadmin' ? u.role !== 'admin' : u.role === 'admin';
+      });
+      root.innerHTML = '<section class="panel"><div class="panel-heading"><div><h2>OWNER PANEL</h2><p class="subtle">Khusus akun wann. Pilih aksi, lalu pilih akun dari daftar.</p></div></div>' +
+        '<div class="button-row"><button type="button" id="ownerAddMode" class="button ' + (mode === 'addadmin' ? 'button-primary' : 'button-outline') + '">Add Admin</button><button type="button" id="ownerRemoveMode" class="button ' + (mode === 'unadmin' ? 'button-danger' : 'button-outline') + '">Un Admin</button></div>' +
+        '<p class="subtle">' + (mode === 'addadmin' ? 'Pilih pengguna yang akan dijadikan admin.' : 'Daftar hanya menampilkan pengguna yang saat ini berstatus admin.') + '</p>' +
+        '<div class="stack">' + (eligible.length ? eligible.map(function (u) {
+          return '<button type="button" class="owner-user-option ' + (selectedId === u.id ? 'selected' : '') + '" data-owner-user="' + esc(u.id) + '" style="display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;text-align:left;padding:14px;border:1px solid var(--line,#dbe5e2);border-radius:12px;background:var(--surface,#fff);color:inherit;cursor:pointer"><span><strong>' + esc(u.username) + '</strong><small style="display:block;opacity:.7;margin-top:4px">' + esc(u.role === 'admin' ? 'Admin' : 'Pengguna') + '</small></span><span>' + (selectedId === u.id ? '✓ Dipilih' : 'Pilih →') + '</span></button>';
+        }).join('') : '<div class="empty-state"><b>Tidak ada pengguna</b>' + (mode === 'addadmin' ? 'Semua akun selain owner sudah menjadi admin.' : 'Belum ada admin lain yang dapat diturunkan.') + '</div>') + '</div>' +
+        '<div class="button-row" style="margin-top:16px"><button id="ownerApply" type="button" class="button ' + (mode === 'addadmin' ? 'button-primary' : 'button-danger') + '" ' + (!selectedId ? 'disabled' : '') + '>' + (mode === 'addadmin' ? 'Jadikan Admin' : 'Turunkan Jadi Pengguna') + '</button><button id="ownerRefresh" type="button" class="button button-outline">Muat ulang</button></div></section>';
+      $('#ownerAddMode').addEventListener('click', function () { mode = 'addadmin'; selectedId = ''; render(); });
+      $('#ownerRemoveMode').addEventListener('click', function () { mode = 'unadmin'; selectedId = ''; render(); });
+      $('[data-owner-user]').forEach(function (button) { button.addEventListener('click', function () { selectedId = button.dataset.ownerUser; render(); }); });
+      $('#ownerRefresh').addEventListener('click', async function () { try { users = await api('/api/owner/users'); selectedId = ''; render(); } catch (e) { showDialog('Gagal memuat pengguna', e.message, {kind:'error'}); } });
+      $('#ownerApply').addEventListener('click', async function () {
+        if (!selectedId) return;
+        var target = eligible.find(function (u) { return u.id === selectedId; });
+        if (!target) return;
+        var button = $('#ownerApply'); button.disabled = true;
+        try {
+          await api('/api/owner/users/' + encodeURIComponent(selectedId) + '/role', {method:'POST',body:JSON.stringify({role:mode === 'addadmin' ? 'admin' : 'user'})});
+          showDialog('Role berhasil diubah', target.username + (mode === 'addadmin' ? ' sekarang menjadi admin.' : ' sekarang bukan admin lagi.'), {autoMs:2500});
+          users = await api('/api/owner/users'); selectedId = ''; render();
+        } catch (e) { showDialog('Perubahan gagal', e.message, {kind:'error'}); button.disabled = false; }
+      });
+    };
+    render();
   };
   var renderAutoClear = async function () {
     var rows = await api('/api/admin/auto-clear');
