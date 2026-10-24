@@ -58,7 +58,7 @@ create index if not exists diamond_requests_status_created_idx
 alter table public.referral_events enable row level security;
 alter table public.diamond_requests enable row level security;
 grant all privileges on public.referral_events, public.diamond_requests to service_role;
-grant usage, select on all sequences in schema public to service_role;
+grant usage, select on sequence public.referral_events_id_seq, public.diamond_requests_id_seq to service_role;
 
 -- Create a user's first referral reward exactly once, after a job is approved.
 -- Both parties must have a real profile; the invitee must be email-verified.
@@ -85,6 +85,7 @@ begin
   for update;
 
   if not found
+     or invitee.disabled
      or invitee.email_verified_at is null
      or invitee.referred_by is null
      or invitee.referral_awarded_at is not null then
@@ -111,6 +112,8 @@ begin
 
   inviter_reward := greatest(0, coalesce(inviter_reward,0));
   invitee_reward := greatest(0, coalesce(invitee_reward,0));
+  -- Do not permanently consume a referral when rewards are still disabled (both are zero).
+  if inviter_reward = 0 and invitee_reward = 0 then return new; end if;
 
   insert into public.referral_events(
     referrer_id, referred_user_id, submission_id, referrer_reward, invitee_reward
