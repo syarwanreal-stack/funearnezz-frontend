@@ -23,7 +23,7 @@
       <div class="field wide"><span>Verifikasi keamanan</span><div id="captchaWidget" aria-label="Verifikasi Saya bukan robot"></div><p class="hint">Selesaikan CAPTCHA asli sebelum login atau daftar.</p></div>
       <div id="authNotice" class="inline-message hidden" role="status"></div>
       <form id="registerForm" class="form-stack">
-        <label class="field"><span>Username</span><input id="registerUsername" name="username" autocomplete="username" minlength="3" maxlength="24" pattern="[A-Za-z0-9_]{3,24}" placeholder="Buat username" required><small>3–24 karakter, huruf, angka, atau underscore.</small></label>
+        <label class="field"><span>Username</span><input id="registerUsername" name="username" autocomplete="username" minlength="3" maxlength="24" pattern="[A-Za-z0-9_]+( [A-Za-z0-9_]+)*" placeholder="Buat username (boleh pakai spasi)" required><small>3–24 karakter; huruf, angka, underscore, dan spasi di antara kata.</small></label>
         <label class="field"><span>Email aktif</span><input id="registerEmail" name="email" type="email" autocomplete="email" maxlength="254" placeholder="nama@email.com" required></label>
         <label class="field"><span>Kode referral (opsional)</span><input id="registerReferral" name="referralCode" maxlength="24" autocomplete="off" placeholder="Masukkan kode teman jika ada"></label>
         <label class="field"><span>Password</span><input id="registerPassword" name="password" type="password" autocomplete="new-password" minlength="8" placeholder="Minimal 8 karakter" required></label>
