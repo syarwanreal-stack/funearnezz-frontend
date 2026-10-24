@@ -93,7 +93,7 @@ begin
   )
   on conflict (id) do update set
     email = excluded.email,
-    email_verified_at = coalesce(public.profiles.email_verified_at, now())
+    email_verified_at = coalesce(profiles.email_verified_at, now())
   returning * into v_profile;
 
   delete from public.pending_registrations where auth_user_id = p_auth_user_id;
