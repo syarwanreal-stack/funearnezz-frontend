@@ -170,9 +170,6 @@ begin
     raise exception 'Parameter penukaran Robux tidak valid';
   end if;
   if coalesce(trim(p_username),'') = '' then raise exception 'Username Roblox wajib diisi'; end if;
-  if p_method='gamepass' and coalesce(trim(p_gamepass_url),'') not like 'https://www.roblox.com/%' then
-    raise exception 'URL Game Pass Roblox tidak valid';
-  end if;
   select * into v_profile from public.profiles where id=p_user_id for update;
   if not found or v_profile.disabled then raise exception 'Akun tidak tersedia'; end if;
   if v_profile.balance < p_cost then raise exception 'Saldo tidak mencukupi'; end if;
