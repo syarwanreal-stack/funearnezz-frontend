@@ -217,9 +217,19 @@ async function runAutoClear(env) {
     const rows = await rest(env, "submissions", "status=in.(approved,rejected)&proof_url=not.is.null&select=id,proof_url&limit=200");
     for (const row of rows || []) {
       try {
-        await storageDelete(env, "submission-proofs", row.proof_url);
-        await rest(env, "submissions", "id=eq." + encodeURIComponent(row.id), { method: "PATCH", headers: { Prefer: "return=minimal" }, body: JSON.stringify({ proof_url: null }) });
-        totals.deleted_proof_files++;
+        try {
+          await storageDelete(env, "submission-proofs", row.proof_url);
+          totals.deleted_proof_files++;
+        } catch (e) {
+          // The object may already have been removed by an earlier run. Do not
+          // clear proof_url in the database: approved submissions with required
+          // proof are validated by the database and reject null proof_url updates.
+          if (e && (e.upstreamStatus === 404 || /not found|does not exist|object.*missing/i.test(String(e.message || e)))) {
+            totals.deleted_proof_files++;
+          } else {
+            throw e;
+          }
+        }
       } catch (e) { totals.failures++; }
     }
   } catch (e) { totals.failures++; totals.details.proof_error = String(e?.message || e).slice(0, 200); }
