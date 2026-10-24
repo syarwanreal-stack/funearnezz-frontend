@@ -2,7 +2,7 @@
 (function () {
   var $ = function (selector, root) { return (root || document).querySelector(selector); };
   var $$ = function (selector, root) { return Array.prototype.slice.call((root || document).querySelectorAll(selector)); };
-  var state = { user: null, view: 'dashboard', config: {}, data: {}, maintenance: null, dialogTimer: null, pendingCount: null, notificationReady: false, pollTimer: null, chatTimer: null, maintenanceTimer: null, liveTimer: null, pendingEmail: '', captchaToken: '', captchaWidgetId: null, captchaSiteKey: '' };
+  var state = { user: null, view: 'dashboard', config: {}, data: {}, maintenance: null, dialogTimer: null, pendingCount: null, notificationReady: false, pollTimer: null, chatTimer: null, maintenanceTimer: null, liveTimer: null, pendingEmail: '' };
   var viewMeta = {
     dashboard: ['RUANG KAMU', 'Dashboard', 'Pantau saldo dan tugas yang tersedia.'],
     history: ['AKTIVITAS', 'Riwayat', 'Catatan saldo masuk, saldo keluar, dan status pengajuan.'],
@@ -121,29 +121,7 @@
     $('#authNotice').textContent = text;
     $('#authNotice').classList.remove('hidden');
   };
-  var resetCaptcha = function () {
-    state.captchaToken = '';
-    if (window.turnstile && state.captchaWidgetId !== null) { try { window.turnstile.reset(state.captchaWidgetId); } catch (e) {} }
-  };
-  var mountCaptcha = async function () {
-    try {
-      var cfg = await api('/api/config');
-      state.captchaSiteKey = String(cfg.captchaSiteKey || '');
-      if (!state.captchaSiteKey) { authMessage('CAPTCHA belum dikonfigurasi. Login dan pendaftaran sementara dinonaktifkan.'); return; }
-      var render = function () {
-        if (!window.turnstile || state.captchaWidgetId !== null) return;
-        state.captchaWidgetId = window.turnstile.render('#captchaWidget',{sitekey:state.captchaSiteKey,theme:'auto',
-          callback:function(token){state.captchaToken=token;$('#authNotice').classList.add('hidden');},
-          'expired-callback':function(){state.captchaToken='';},
-          'error-callback':function(){state.captchaToken='';authMessage('CAPTCHA gagal dimuat. Periksa koneksi lalu coba lagi.');}});
-      };
-      render(); window.addEventListener('turnstile-ready',render,{once:true});
-    } catch(e) { authMessage('CAPTCHA tidak dapat dimuat. Periksa koneksi lalu muat ulang halaman.'); }
-  };
-  var requireCaptchaToken = function () {
-    if (!state.captchaToken) { authMessage('Centang CAPTCHA “Saya bukan robot” terlebih dahulu.'); return false; }
-    return true;
-  };
+
 
   var setLoggedOut = function () {
     state.user = null;
@@ -879,16 +857,15 @@
       event.preventDefault();
       var form = event.currentTarget, button = $('button[type="submit"]', form), username = form.username.value.trim(), email = form.email.value.trim().toLowerCase(), password = form.password.value;
       if (password !== form.confirm.value) { authMessage('Konfirmasi password tidak sama.'); return; }
-      if (!requireCaptchaToken()) return;
       button.disabled = true; button.textContent = 'Mengirim kode…';
       try {
-        var result = await api('/api/register', { method: 'POST', body: JSON.stringify({ username: username, email: email, password: password, referralCode: form.referralCode.value.trim(), captchaToken: state.captchaToken }) });
+        var result = await api('/api/register', { method: 'POST', body: JSON.stringify({ username: username, email: email, password: password, referralCode: form.referralCode.value.trim() }) });
         state.pendingEmail = email;
         $('#verifyEmail').value = email;
         setAuthMode('verify');
         authMessage(result.message || 'Kode verifikasi diminta dikirim ke email kamu.');
       } catch (error) { authMessage(error.message); }
-      finally { resetCaptcha(); button.disabled = false; button.textContent = 'Daftar'; }
+      finally { button.disabled = false; button.textContent = 'Daftar'; }
     });
     $('#verifyForm').addEventListener('submit', async function (event) {
       event.preventDefault();
@@ -914,13 +891,12 @@
     $('#loginForm').addEventListener('submit', async function (event) {
       event.preventDefault();
       var form = event.currentTarget, button = $('button[type="submit"]', form);
-      if (!requireCaptchaToken()) return;
       button.disabled = true; button.textContent = 'Memeriksa…';
       try {
-        var result = await api('/api/login', { method: 'POST', body: JSON.stringify({ email: form.email.value.trim(), password: form.password.value, captchaToken: state.captchaToken }) });
+        var result = await api('/api/login', { method: 'POST', body: JSON.stringify({ email: form.email.value.trim(), password: form.password.value }) });
         await setLoggedIn(result.user); say('Login berhasil.');
       } catch (error) { authMessage(error.message); }
-      finally { resetCaptcha(); button.disabled = false; button.textContent = 'Login'; }
+      finally { button.disabled = false; button.textContent = 'Login'; }
     });
     $('#menuButton').addEventListener('click', function () { toggleMenu(); });
     $('#closeMenu').addEventListener('click', function () { toggleMenu(false); });
@@ -948,6 +924,5 @@
   };
   bindTopLevel();
   setAuthMode('register');
-  mountCaptcha();
   boot();
 })();
