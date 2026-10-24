@@ -357,7 +357,7 @@
     var fee = numberSetting(config.danaFee, 2000);
     $('#viewRoot').innerHTML =
       '<section class="panel"><div class="panel-heading"><div><h2>Buat request</h2><p>Pilih jenis penarikan terlebih dahulu. Request akan masuk antrean admin.</p></div></div>' +
-      '<div class="withdraw-tabs" id="withdrawTabs" role="tablist" aria-label="Jenis penarikan"><span class="withdraw-tab-slider" aria-hidden="true"></span><button class="withdraw-tab active" id="tabRobux" type="button" role="tab" aria-selected="true" data-withdraw-tab="robux">ROBUX</button><button class="withdraw-tab" id="tabDana" type="button" role="tab" aria-selected="false" data-withdraw-tab="dana">DANA</button></div>' +
+      '<div class="withdraw-tabs" id="withdrawTabs" role="tablist" aria-label="Jenis penarikan"><span class="withdraw-tab-slider" aria-hidden="true"></span><button class="withdraw-tab active" id="tabRobux" type="button" role="tab" aria-selected="true" data-withdraw-tab="robux">ROBUX</button><button class="withdraw-tab" id="tabDana" type="button" role="tab" aria-selected="false" data-withdraw-tab="dana">DANA</button><button class="withdraw-tab" id="tabDiamond" type="button" role="tab" aria-selected="false" data-withdraw-tab="diamond">DIAMOND FF</button></div>' +
       '<form id="withdrawForm" class="form-grid">' +
       '<input id="withdrawType" name="type" type="hidden" value="robux">' +
       '<label class="field" id="danaAmountWrap" hidden><span>Nominal saldo yang dipotong (Rp)</span><input id="withdrawAmount" type="number" name="amount" min="1" step="1" placeholder="Contoh: 10000"></label>' +
@@ -367,6 +367,9 @@
       '<label class="field" id="robuxCountWrap" hidden><span>Jumlah Robux</span><input id="robuxCount" type="number" name="robux" min="' + esc(numberSetting(config.robuxMin, 10)) + '" step="1" placeholder="Jumlah Robux"></label>' +
       '<label class="field" id="robloxUsernameWrap" hidden><span>Username Roblox</span><input name="robloxUsername" maxlength="100" placeholder="Username Roblox"></label>' +
       '<label class="field wide" id="gamepassWrap" hidden><span>Link Game Pass</span><input name="gamepassUrl" type="url" maxlength="500" placeholder="https://www.roblox.com/..."></label>' +
+      '<label class="field" id="diamondCountWrap" hidden><span>Jumlah diamond FF</span><input id="diamondCount" name="diamonds" type="number" min="' + esc(numberSetting(config.diamondMin, 1)) + '" step="1" placeholder="Jumlah diamond"></label>' +
+      '<label class="field" id="diamondUidWrap" hidden><span>UID Free Fire</span><input name="ffUid" inputmode="numeric" pattern="[0-9]{5,20}" maxlength="20" placeholder="UID Free Fire"></label>' +
+      '<label class="field" id="diamondServerWrap" hidden><span>Server/region (opsional)</span><input name="serverId" maxlength="32" placeholder="ID server jika diperlukan"></label>' +
       '<div class="currency-note wide" id="withdrawCalc">Biaya admin DANA saat ini: ' + cash(fee) + '. Nominal ini ditampilkan sebelum request dikirim.</div>' +
       '<div class="wide"><button class="button button-primary full" type="submit">Kirim request withdraw</button></div></form></section>' +
       '<section class="panel"><div class="panel-heading"><div><h2>Riwayat withdraw</h2><p>Status diperbarui setelah admin memproses request.</p></div></div><div class="stack">' + (requestHtml || '<div class="empty-state">Belum ada request withdraw.</div>') + '</div></section>';
@@ -376,9 +379,12 @@
       var method = $('#robuxMethod').value, count = Number($('#robuxCount').value || 0);
       $('#tabRobux').classList.toggle('active', type === 'robux');
       $('#tabDana').classList.toggle('active', type === 'dana');
+      $('#tabDiamond').classList.toggle('active', type === 'diamond');
       $('#withdrawTabs').classList.toggle('is-dana', type === 'dana');
+      $('#withdrawTabs').classList.toggle('is-diamond', type === 'diamond');
       $('#tabRobux').setAttribute('aria-selected', String(type === 'robux'));
       $('#tabDana').setAttribute('aria-selected', String(type === 'dana'));
+      $('#tabDiamond').setAttribute('aria-selected', String(type === 'diamond'));
       $('#danaAmountWrap').hidden = type !== 'dana';
       $('#danaDestinationWrap').hidden = type !== 'dana';
       $('#robuxAmountInfo').hidden = type !== 'robux';
@@ -386,9 +392,15 @@
       $('#robuxCountWrap').hidden = type !== 'robux';
       $('#robloxUsernameWrap').hidden = type !== 'robux';
       $('#gamepassWrap').hidden = type !== 'robux' || method !== 'gamepass';
+      $('#diamondCountWrap').hidden = type !== 'diamond';
+      $('#diamondUidWrap').hidden = type !== 'diamond';
+      $('#diamondServerWrap').hidden = type !== 'diamond';
       if (type === 'dana') {
         var payout = amount - fee;
         $('#withdrawCalc').textContent = 'Biaya admin DANA saat ini ' + cash(fee) + '. Saldo dipotong ' + cash(amount) + '; estimasi diterima ' + cash(Math.max(0, payout)) + '.';
+      } else if (type === 'diamond') {
+        var diamondRate = numberSetting(config.diamondRate, 0), diamonds = Number($('#diamondCount').value || 0);
+        $('#withdrawCalc').textContent = diamondRate > 0 ? 'Harga ' + cash(diamondRate) + ' per diamond. ' + diamonds + ' diamond akan memotong saldo ' + cash(diamondRate * diamonds) + '. Pengiriman diproses manual oleh admin.' : 'Penarikan diamond FF belum diaktifkan. Admin perlu mengatur harga per diamond terlebih dahulu.';
       } else {
         var rate = numberSetting(method === 'gamepass' ? config.gamepassRate : config.usernameRate, method === 'gamepass' ? 170 : 230);
         var cost = count * rate;
@@ -401,7 +413,7 @@
         updateCalc();
       });
     });
-    ['change', 'input'].forEach(function (evt) { $('#robuxMethod').addEventListener(evt, updateCalc); $('#withdrawAmount').addEventListener(evt, updateCalc); $('#robuxCount').addEventListener(evt, updateCalc); });
+    ['change', 'input'].forEach(function (evt) { $('#robuxMethod').addEventListener(evt, updateCalc); $('#withdrawAmount').addEventListener(evt, updateCalc); $('#robuxCount').addEventListener(evt, updateCalc); $('#diamondCount').addEventListener(evt, updateCalc); });
     updateCalc();
     form.addEventListener('submit', async function (event) {
       event.preventDefault();
@@ -413,6 +425,12 @@
           if (amount <= fee) throw new Error('Nominal penarikan harus lebih besar dari biaya admin DANA ' + cash(fee) + '.');
           if (!form.destination.value.trim()) throw new Error('Nomor DANA wajib diisi.');
           await api('/api/withdrawals', { method: 'POST', body: JSON.stringify({ method: 'DANA', amount: amount, destination: form.destination.value.trim() }) });
+        } else if ($('#withdrawType').value === 'diamond') {
+          var diamonds = Number(form.diamonds.value);
+          if (!Number.isSafeInteger(diamonds) || diamonds < numberSetting(config.diamondMin, 1)) throw new Error('Jumlah diamond di bawah batas minimum.');
+          if (numberSetting(config.diamondRate, 0) < 1) throw new Error('Harga diamond FF belum diatur admin.');
+          if (!/^\\d{5,20}$/.test(form.ffUid.value.trim())) throw new Error('UID Free Fire harus berupa 5–20 angka.');
+          await api('/api/diamond', { method: 'POST', body: JSON.stringify({ diamonds: diamonds, ffUid: form.ffUid.value.trim(), serverId: form.serverId.value.trim() }) });
         } else {
           var robux = Number(form.robux.value);
           var methodName = form.elements.namedItem('method').value;
