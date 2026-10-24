@@ -428,7 +428,7 @@
           var diamonds = Number(form.diamonds.value);
           if (!Number.isSafeInteger(diamonds) || diamonds < numberSetting(config.diamondMin, 1)) throw new Error('Jumlah diamond di bawah batas minimum.');
           if (numberSetting(config.diamondRate, 0) < 1) throw new Error('Harga diamond FF belum diatur admin.');
-          if (!/^\\d{5,20}$/.test(form.ffUid.value.trim())) throw new Error('UID Free Fire harus berupa 5–20 angka.');
+          if (!/^\d{5,20}$/.test(form.ffUid.value.trim())) throw new Error('UID Free Fire harus berupa 5–20 angka.');
           await api('/api/diamond', { method: 'POST', body: JSON.stringify({ diamonds: diamonds, ffUid: form.ffUid.value.trim(), serverId: form.serverId.value.trim() }) });
         } else {
           var robux = Number(form.robux.value);
