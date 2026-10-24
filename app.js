@@ -110,6 +110,7 @@
     $('#authSwitchText').textContent = register ? 'Sudah punya akun?' : 'Belum punya akun?';
     $('#switchAuth').textContent = register ? 'Login' : 'Daftar sekarang';
     $('#switchAuth').parentElement.classList.toggle('hidden', verify);
+    $('#openVerifyWrap').classList.toggle('hidden', verify);
     $('#authNotice').classList.add('hidden');
     $('#authNotice').textContent = '';
   };
@@ -809,6 +810,7 @@
   var bindTopLevel = function () {
     try { var refParam = new URLSearchParams(window.location.search).get('ref'); if (refParam && !$('#registerReferral').value) $('#registerReferral').value = refParam.toUpperCase().slice(0, 24); } catch (e) {}
     $('#switchAuth').addEventListener('click', function () { setAuthMode($('#registerForm').classList.contains('hidden') ? 'register' : 'login'); });
+    $('#openVerify').addEventListener('click', function () { $('#verifyEmail').value = $('#registerEmail').value.trim() || $('#loginEmail').value.trim(); setAuthMode('verify'); });
     $('#registerForm').addEventListener('submit', async function (event) {
       event.preventDefault();
       var form = event.currentTarget, button = $('button[type="submit"]', form), username = form.username.value.trim(), email = form.email.value.trim().toLowerCase(), password = form.password.value;
