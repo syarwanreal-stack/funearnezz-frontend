@@ -94,7 +94,7 @@ const body = async req => {
   }
   try { return await req.json(); } catch { return {}; }
 };
-const usernameOK = u => typeof u==="string" && /^[A-Za-z0-9_]{3,24}$/.test(u);
+const usernameOK = u => typeof u==="string" && u.length>=3 && u.length<=24 && /^[A-Za-z0-9_]+(?: [A-Za-z0-9_]+)*$/.test(u);
 const emailFor = u => u.toLowerCase()+"@"+AUTH_HOST;
 const safeProfile = p => p ? ({id:p.id, username:p.username, email:p.email||null, email_verified_at:p.email_verified_at||null, emailVerified:!!p.email_verified_at, referral_code:p.referral_code||null, announcement_seen_at:p.announcement_seen_at||null, role:p.role, balance:Number(p.balance||0), reserved_balance:Number(p.reserved_balance||0), created_at:p.created_at}) : null;
 async function verifyCaptcha(request, env, token) {
@@ -256,7 +256,14 @@ async function handle(request,env) {
       await verifyCaptcha(request,env,b.captchaToken);
       if(!identifier||!password) return fail("Email atau password salah",401,cors(request,env));
       // Keep legacy username-only accounts accessible while new registrations require email.
-      const loginEmail=identifier.includes("@")?identifier.toLowerCase():emailFor(identifier);
+      let loginEmail;
+      if(identifier.includes("@")) {
+        loginEmail=identifier.toLowerCase();
+      } else {
+        // Resolve display usernames (including spaces) to the account email. Keep fallback for legacy username-only accounts.
+        const matched=(await rest(env,"profiles","username=ilike."+encodeURIComponent(identifier)+"&select=email,username&limit=1"))[0];
+        loginEmail=matched?.email || emailFor(identifier);
+      }
       const data=await sb(env,"/auth/v1/token?grant_type=password",{method:"POST",body:JSON.stringify({email:loginEmail,password})});
       const rows=await rest(env,"profiles","id=eq."+encodeURIComponent(data.user.id)+"&select=*");
       if(!rows[0]||rows[0].disabled) return fail("Akun tidak ditemukan atau dinonaktifkan",403,cors(request,env));
