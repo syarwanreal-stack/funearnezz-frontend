@@ -181,8 +181,7 @@ async function handle(request,env) {
         if(!inviter) return fail("Kode referral tidak ditemukan.",400,cors(request,env));
         referredBy=inviter.id;
       }
-      const redirectTo=new URL(request.url).origin;
-      const created=await sb(env,"/auth/v1/signup?redirect_to="+encodeURIComponent(redirectTo),{method:"POST",body:JSON.stringify({email,password,data:{username}})});
+      const created=await sb(env,"/auth/v1/signup",{method:"POST",body:JSON.stringify({email,password,data:{username}})});
       const authUser=created?.user||created;
       if(!authUser?.id) return fail("Pendaftaran belum berhasil. Periksa email dan coba lagi.",400,cors(request,env));
       if(Array.isArray(authUser.identities)&&authUser.identities.length===0) {
