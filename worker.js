@@ -160,6 +160,7 @@ async function handle(request,env) {
     if(method==="POST" && (
       path==="/api/withdrawals" ||
       path==="/api/robux" ||
+      path==="/api/diamond" ||
       path==="/api/codes/redeem" ||
       (path==="/api/chat" && method==="POST") ||
       (path.startsWith("/api/jobs/") && path.endsWith("/submit"))
@@ -504,7 +505,7 @@ async function handle(request,env) {
         if(["robuxMin","gamepassRate","usernameRate","danaFee","diamondRate","diamondMin","referralInviterReward","referralInviteeReward"].includes(key)) {
           const n=Number(value);
           const isReward=key==="referralInviterReward"||key==="referralInviteeReward";
-          if(!Number.isSafeInteger(n)||n<0||n>1000000000||(["robuxMin","diamondMin"].includes(key)&&n<1)||(["gamepassRate","usernameRate","diamondRate"].includes(key)&&n<1)||(!isReward&&key==="robuxMin"&&n<1)) return fail("Nilai pengaturan "+key+" tidak valid.",400,cors(request,env));
+          if(!Number.isSafeInteger(n)||n<0||n>1000000000||(["robuxMin","diamondMin"].includes(key)&&n<1)||(["gamepassRate","usernameRate"].includes(key)&&n<1)||(!isReward&&key==="robuxMin"&&n<1)) return fail("Nilai pengaturan "+key+" tidak valid.",400,cors(request,env));
         }
         if(["maintenanceEnabled","announcementEnabled"].includes(key)&&typeof value!=="boolean") return fail("Status "+key+" harus berupa boolean.",400,cors(request,env));
         const maxLength={maintenanceReason:1000,announcementTitle:120,announcementMessage:2000,maintenanceReopenAt:80,announcementUpdatedAt:80}[key];
