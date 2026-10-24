@@ -682,6 +682,21 @@
       finally { button.disabled = false; }
     });
   };
+  var renderReferral = async function () {
+    var data = await api('/api/referral');
+    var inviteUrl = window.location.origin + '/?ref=' + encodeURIComponent(data.code);
+    $('#viewRoot').innerHTML = '<section class="panel"><div class="panel-heading"><div><h2>Undang teman</h2><p>Bonus diberikan kepada kamu dan temanmu setelah email teman terverifikasi serta job pertamanya disetujui admin. Tidak ada batas jumlah undangan.</p></div></div>' +
+      '<div class="request-meta"><div><small>Total undangan</small><strong>' + esc(data.invitedCount || 0) + '</strong></div><div><small>Referral berhasil</small><strong>' + esc(data.qualifiedCount || 0) + '</strong></div><div><small>Total bonus pengundang</small><strong>' + cash(data.earned || 0) + '</strong></div></div>' +
+      '<label class="field wide"><span>Kode referral kamu</span><div class="button-row"><input id="referralCodeValue" readonly value="' + esc(data.code) + '"><button id="copyReferralCode" class="button button-soft" type="button">Salin kode</button></div></label>' +
+      '<label class="field wide"><span>Link undangan</span><div class="button-row"><input id="referralLinkValue" readonly value="' + esc(inviteUrl) + '"><button id="copyReferralLink" class="button button-primary" type="button">Salin link</button></div></label>' +
+      '<div class="currency-note">Reward pengundang: ' + cash(data.inviterReward || 0) + ' · Reward teman baru: ' + cash(data.inviteeReward || 0) + '. Admin bisa mengubah kedua nominal dari menu Setting UATS.</div></section>';
+    $('#copyReferralCode').addEventListener('click', function () {
+      if (navigator.clipboard) navigator.clipboard.writeText(data.code).then(function () { say('Kode referral disalin.'); }).catch(function () { showDialog('Salin manual', 'Pilih dan salin kode referral di kotak.', { kind: 'info' }); });
+    });
+    $('#copyReferralLink').addEventListener('click', function () {
+      if (navigator.clipboard) navigator.clipboard.writeText(inviteUrl).then(function () { say('Link referral disalin.'); }).catch(function () { showDialog('Salin manual', 'Pilih dan salin link referral di kotak.', { kind: 'info' }); });
+    });
+  };
   var renderCreateJob = function () {
     $('#viewRoot').innerHTML = '<section class="panel"><div class="panel-heading"><div><h2>Job baru</h2><p>Kuota menghitung pengajuan yang masih aktif dan yang disetujui. Pengajuan yang ditolak membebaskan satu kuota.</p></div></div><form id="jobCreateForm" class="form-grid">' +
       '<label class="field wide"><span>NAMA JOB</span><input name="title" maxlength="160" required placeholder="Nama pekerjaan"></label>' +
