@@ -14,6 +14,7 @@
     codes: ['REWARD ADMIN', 'Create Unickcode', 'Buat kode saldo dengan batas jumlah penerima.'],
     'create-job': ['TUGAS ADMIN', 'Create Job', 'Buat tugas dengan reward, link, kuota, dan pengaturan bukti foto.'],
     'review-jobs': ['ANTREAN JOB', 'Review Job', 'Periksa bukti kerja dan setujui reward atau tolak dengan alasan.'],
+    'auto-clear': ['PEMELIHARAAN', 'Laporan Auto Clear', 'Lihat data dan file yang dibersihkan otomatis.'],
     'payout-settings': ['PENGATURAN ADMIN', 'Setting UATS', 'Atur tarif penarikan dan reward referral.']
   };
   var cash = function (value) {
@@ -252,6 +253,7 @@
       else if (view === 'codes') await renderCodes();
       else if (view === 'create-job') renderCreateJob();
       else if (view === 'review-jobs') await renderJobReviews();
+      else if (view === 'auto-clear') await renderAutoClear();
       else if (view === 'payout-settings') renderPayoutSettings();
     } catch (error) {
       $('#viewRoot').innerHTML = '<div class="panel"><div class="empty-state"><b>Data belum dapat dimuat</b>' + esc(error.message) + '</div><button id="retryLoad" class="button button-outline" type="button">Coba lagi</button></div>';
@@ -287,7 +289,7 @@
     state.user = result.user || state.user;
     $('#headerBalance').textContent = cash(wallet.balance == null ? state.user.balance : wallet.balance);
     var jobHtml = (Array.isArray(jobs) ? jobs : []).map(function (job) {
-      return '<article class="job-card"><div class="card-top"><div><h3>' + esc(job.title) + '</h3><p>' + esc(job.description || 'Ikuti instruksi job yang tersedia.') + '</p></div><span class="tag reward">+' + cash(job.reward) + '</span></div><div class="tag-list"><span class="tag">Kuota ' + esc(job.quota_used || 0) + '/' + esc(job.quota == null ? '∞' : job.quota) + '</span><span class="tag">' + (job.photo_required ? 'Foto bukti wajib' : 'Foto bukti opsional') + '</span><span class="tag">' + (job.allow_repeat ? 'Boleh berulang' : '1 kali per akun') + '</span></div>' +
+      return '<article class="job-card">' + (job.illustration_url ? '<img src="' + esc(job.illustration_url) + '" alt="Ilustrasi job" loading="lazy" style="display:block;width:100%;max-height:220px;object-fit:contain;border-radius:12px;margin-bottom:12px">' : '') + '<div class="card-top"><div><h3>' + esc(job.title) + '</h3><p>' + esc(job.description || 'Ikuti instruksi job yang tersedia.') + '</p></div><span class="tag reward">+' + cash(job.reward) + '</span></div><div class="tag-list"><span class="tag">Kuota ' + esc(job.quota_used || 0) + '/' + esc(job.quota == null ? '∞' : job.quota) + '</span><span class="tag">' + (job.photo_required ? 'Foto bukti wajib' : 'Foto bukti opsional') + '</span><span class="tag">' + (job.allow_repeat ? 'Boleh berulang' : '1 kali per akun') + '</span></div>' +
         (job.link ? '<p><a href="' + esc(job.link) + '" rel="noopener noreferrer" target="_blank" class="text-button">Buka link tugas ↗</a></p>' : '') +
         '<div class="button-row"><button class="button button-primary" type="button" data-job-submit="' + esc(job.id) + '" data-job-title="' + esc(job.title) + '" data-photo="' + String(!!job.photo_required) + '">Kerjakan job</button></div></article>';
     }).join('');
@@ -734,6 +736,7 @@
       '<label class="field wide"><span>NAMA JOB</span><input name="title" maxlength="160" required placeholder="Nama pekerjaan"></label>' +
       '<label class="field wide"><span>DESKRIPSI</span><textarea name="description" maxlength="4000" required placeholder="Jelaskan langkah-langkah pengerjaan"></textarea></label>' +
       '<label class="field wide"><span>LINK JOB (opsional)</span><input name="link" type="url" maxlength="1000" placeholder="https://..."></label>' +
+      '<label class="field wide"><span>ILUSTRASI JOB (opsional)</span><input id="jobIllustrationInput" name="illustration" type="file" accept="image/jpeg,image/png,image/webp"><small>JPG, PNG, WEBP. Maksimal 2 MB. Gambar hanya sebagai panduan job.</small><img id="jobIllustrationPreview" alt="Pratinjau ilustrasi job" hidden style="display:block;max-width:100%;max-height:200px;object-fit:contain;border-radius:12px;margin-top:8px"></label>' +
       '<label class="field"><span>REWARD (Rp)</span><input name="reward" type="number" min="0" step="1" required placeholder="1000"></label>' +
       '<label class="field"><span>KUOTA</span><input name="quota" type="number" min="1" step="1" required placeholder="10"></label>' +
       '<label class="check-row wide"><span>Wajib kirim gambar bukti</span><span class="switch"><input name="photo_required" type="checkbox"><span></span></span></label>' +
@@ -749,16 +752,40 @@
         catch (error) { showDialog('Gagal menghapus job', error.message, { kind: 'error' }); }
       } });
     }); });
+    var illustrationInput = $('#jobIllustrationInput'), illustrationPreview = $('#jobIllustrationPreview'), illustrationPreviewUrl = null;
+    illustrationInput.addEventListener('change', function () {
+      var file = illustrationInput.files[0];
+      if (illustrationPreviewUrl) { URL.revokeObjectURL(illustrationPreviewUrl); illustrationPreviewUrl = null; }
+      illustrationPreview.hidden = true; illustrationPreview.removeAttribute('src');
+      if (!file) return;
+      if (file.size > 2 * 1024 * 1024) { illustrationInput.value = ''; showDialog('Ilustrasi terlalu besar', 'Ukuran ilustrasi maksimal 2 MB.', { kind: 'error' }); return; }
+      if (['image/jpeg','image/png','image/webp'].indexOf(file.type) < 0) { illustrationInput.value = ''; showDialog('Format tidak didukung', 'Pilih gambar JPG, PNG, atau WEBP.', { kind: 'error' }); return; }
+      illustrationPreviewUrl = URL.createObjectURL(file); illustrationPreview.src = illustrationPreviewUrl; illustrationPreview.hidden = false;
+    });
     $('#jobCreateForm').addEventListener('submit', async function (event) {
       event.preventDefault();
       var form = event.currentTarget, button = $('button[type="submit"]', form); button.disabled = true;
       try {
-        await api('/api/admin/jobs', { method: 'POST', body: JSON.stringify({ title: form.title.value.trim(), description: form.description.value.trim(), link: form.link.value.trim(), reward: Number(form.reward.value), quota: Number(form.quota.value), photo_required: form.photo_required.checked, allow_repeat: form.allow_repeat.checked }) });
+        await api('/api/admin/jobs', { method: 'POST', body: new FormData(form) });
         showDialog('Job berhasil dibuat', 'Job kini muncul di dashboard pengguna dan kuotanya akan diperbarui otomatis.', { autoMs: 3000 });
         await navigate('create-job');
       } catch (error) { showDialog('Job gagal dibuat', error.message, { kind: 'error' }); }
       finally { button.disabled = false; }
     });
+  };
+  var renderAutoClear = async function () {
+    var rows = await api('/api/admin/auto-clear');
+    var html = (rows || []).map(function (item) {
+      var details = item.details || {};
+      return '<article class="history-row"><div class="card-top"><div><strong>' + esc(item.trigger || 'scheduled') + '</strong><p class="subtle">' + esc(date(item.run_at)) + '</p></div><span class="tag ' + (Number(item.failures || 0) ? 'danger' : 'success') + '">' + (Number(item.failures || 0) ? 'Error ' + esc(item.failures) : 'Selesai') + '</span></div>' +
+        '<p>Pesan chat dihapus: <b>' + esc(item.deleted_chat_messages || 0) + '</b></p>' +
+        '<p>Foto bukti dihapus: <b>' + esc(item.deleted_proof_files || 0) + '</b></p>' +
+        '<p>Ilustrasi job dihapus: <b>' + esc(item.deleted_job_illustrations || 0) + '</b></p>' +
+        '<p>Pendaftaran kedaluwarsa: <b>' + esc(item.expired_registrations || 0) + '</b></p>' +
+        (Object.keys(details).length ? '<p class="subtle">Detail: ' + esc(JSON.stringify(details)) + '</p>' : '') + '</article>';
+    }).join('');
+    $('#viewRoot').innerHTML = '<section class="panel"><div class="panel-heading"><div><h2>Riwayat Auto Clear</h2><p>Menampilkan hingga 100 proses terakhir, termasuk kegagalan penghapusan.</p></div><button id="autoClearRefresh" class="button button-soft" type="button">Perbarui</button></div><div class="stack">' + (html || '<div class="empty-state">Belum ada laporan Auto Clear. Laporan muncul setelah cron berjalan atau setelah foto/job dibersihkan.</div>') + '</div></section>';
+    $('#autoClearRefresh').addEventListener('click', function () { navigate('auto-clear'); });
   };
   var renderPayoutSettings = async function () {
     var result = await api('/api/admin/settings'), cfg = {};
