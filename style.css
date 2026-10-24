@@ -2,8 +2,14 @@
 
 /* Withdrawal type tabs: keep DANA and Robux forms separate and obvious. */
 .withdraw-tabs{position:relative;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;padding:5px;margin:0 0 20px;border:1px solid var(--line);border-radius:14px;background:#f4f9f7;isolation:isolate}
+.withdraw-tabs:not(.settings-tabs){grid-template-columns:repeat(3,minmax(0,1fr))}
+.withdraw-tabs.settings-tabs{grid-template-columns:repeat(2,minmax(0,1fr))}
 .withdraw-tab-slider{position:absolute;z-index:0;top:5px;bottom:5px;left:5px;width:calc(50% - 8px);border:1px solid #dcebe4;border-radius:10px;background:#fff;box-shadow:0 2px 8px #163d2b0b;transform:translateX(0);transition:transform .22s ease;pointer-events:none}
+.withdraw-tabs:not(.settings-tabs) .withdraw-tab-slider{width:calc(33.333% - 8px)}
+.withdraw-tabs.settings-tabs .withdraw-tab-slider{width:calc(50% - 8px)}
 .withdraw-tabs.is-dana .withdraw-tab-slider{transform:translateX(calc(100% + 6px))}
+.withdraw-tabs.is-diamond .withdraw-tab-slider{transform:translateX(calc(200% + 12px))}
+.withdraw-tabs.settings-tabs.is-dana .withdraw-tab-slider{transform:translateX(calc(100% + 6px))}
 .withdraw-tab{position:relative;z-index:1;min-height:46px;border:1px solid transparent;border-radius:10px;background:transparent;color:#71837b;font-size:13px;font-weight:900;letter-spacing:.5px;transition:color .18s ease}
 .withdraw-tab.active{background:transparent;border-color:transparent;color:#08745e;box-shadow:none}
 .withdraw-tab:focus-visible{outline:3px solid #22a88c55;outline-offset:2px}

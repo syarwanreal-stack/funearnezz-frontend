@@ -2,18 +2,19 @@
 (function () {
   var $ = function (selector, root) { return (root || document).querySelector(selector); };
   var $$ = function (selector, root) { return Array.prototype.slice.call((root || document).querySelectorAll(selector)); };
-  var state = { user: null, view: 'dashboard', config: {}, data: {}, maintenance: null, dialogTimer: null, pendingCount: null, notificationReady: false, pollTimer: null, chatTimer: null };
+  var state = { user: null, view: 'dashboard', config: {}, data: {}, maintenance: null, dialogTimer: null, pendingCount: null, notificationReady: false, pollTimer: null, chatTimer: null, maintenanceTimer: null, pendingEmail: '' };
   var viewMeta = {
     dashboard: ['RUANG KAMU', 'Dashboard', 'Pantau saldo dan tugas yang tersedia.'],
     history: ['AKTIVITAS', 'Riwayat', 'Catatan saldo masuk, saldo keluar, dan status pengajuan.'],
-    withdraw: ['PENARIKAN', 'Withdraw', 'Pilih DANA atau Robux, lalu cek potongan saldo sebelum mengirim.'],
+    withdraw: ['PENARIKAN', 'Withdraw', 'Pilih DANA, Robux, atau diamond Free Fire.'],
+    referral: ['REWARD', 'Referral', 'Undang teman dan dapatkan bonus setelah teman memverifikasi email dan menyelesaikan job pertamanya.'],
     chat: ['KOMUNITAS', 'Global Chat', 'Berbagi info dengan sopan. Promosi dan spam tidak diperbolehkan.'],
     maintenance: ['PENGATURAN ADMIN', 'Maintenance Menu', 'Kelola maintenance dan pengumuman untuk semua pengguna.'],
     requests: ['ANTREAN ADMIN', 'Request Withdraw', 'Request DANA dan Robux tampil bersama dalam satu antrean.'],
     codes: ['REWARD ADMIN', 'Create Unickcode', 'Buat kode saldo dengan batas jumlah penerima.'],
     'create-job': ['TUGAS ADMIN', 'Create Job', 'Buat tugas dengan reward, link, kuota, dan pengaturan bukti foto.'],
     'review-jobs': ['ANTREAN JOB', 'Review Job', 'Periksa bukti kerja dan setujui reward atau tolak dengan alasan.'],
-    'payout-settings': ['PENGATURAN ADMIN', 'Setting Penarikan', 'Atur tarif Robux dan biaya admin DANA.']
+    'payout-settings': ['PENGATURAN ADMIN', 'Setting UATS', 'Atur tarif penarikan dan reward referral.']
   };
   var cash = function (value) {
     var n = Number(value || 0);
@@ -100,13 +101,16 @@
     });
   };
   var setAuthMode = function (mode) {
-    var register = mode === 'register';
+    var register = mode === 'register', verify = mode === 'verify';
     $('#registerForm').classList.toggle('hidden', !register);
-    $('#loginForm').classList.toggle('hidden', register);
-    $('#authHeading').textContent = register ? 'Daftar Akun' : 'Masuk';
-    $('#authSubheading').textContent = register ? 'Buat akun untuk mulai mendapatkan reward' : 'Masuk untuk melanjutkan';
+    $('#loginForm').classList.toggle('hidden', register || verify);
+    $('#verifyForm').classList.toggle('hidden', !verify);
+    $('#authHeading').textContent = register ? 'Daftar Akun' : verify ? 'Verifikasi Email' : 'Masuk';
+    $('#authSubheading').textContent = register ? 'Buat akun dan verifikasi email untuk mulai mendapatkan reward' : verify ? 'Masukkan kode yang dikirim ke email kamu' : 'Masuk untuk melanjutkan';
     $('#authSwitchText').textContent = register ? 'Sudah punya akun?' : 'Belum punya akun?';
     $('#switchAuth').textContent = register ? 'Login' : 'Daftar sekarang';
+    $('#switchAuth').parentElement.classList.toggle('hidden', verify);
+    $('#openVerifyWrap').classList.toggle('hidden', verify);
     $('#authNotice').classList.add('hidden');
     $('#authNotice').textContent = '';
   };
@@ -122,7 +126,9 @@
     setAuthMode('register');
     clearInterval(state.pollTimer);
     clearInterval(state.chatTimer);
+    clearInterval(state.maintenanceTimer);
     state.chatTimer = null;
+    state.maintenanceTimer = null;
   };
   var setLoggedIn = function (user) {
     state.user = user;
@@ -133,7 +139,9 @@
     $('#drawerRole').textContent = user.role === 'admin' ? 'Administrator' : user.role === 'staff' ? 'Staff' : 'Pengguna';
     $('#adminNav').classList.toggle('hidden', user.role !== 'admin');
     startRequestPolling();
-    applyMaintenance();
+    clearInterval(state.maintenanceTimer);
+    applyMaintenance().then(showAnnouncement);
+    state.maintenanceTimer = setInterval(applyMaintenance, 30000);
     return navigate('dashboard');
   };
   var getConfig = async function () {
@@ -144,7 +152,11 @@
       state.config.gamepassRate = numberSetting(state.config.gamepassRate, 170);
       state.config.usernameRate = numberSetting(state.config.usernameRate, 230);
       state.config.danaFee = numberSetting(state.config.danaFee, 2000);
-    } catch (e) { state.config = { robuxMin: 10, gamepassRate: 170, usernameRate: 230, danaFee: 2000 }; }
+      state.config.diamondRate = numberSetting(state.config.diamondRate, 0);
+      state.config.diamondMin = numberSetting(state.config.diamondMin, 1);
+      state.config.referralInviterReward = numberSetting(state.config.referralInviterReward, 0);
+      state.config.referralInviteeReward = numberSetting(state.config.referralInviteeReward, 0);
+    } catch (e) { state.config = { robuxMin: 10, gamepassRate: 170, usernameRate: 230, danaFee: 2000, diamondRate: 0, diamondMin: 1, referralInviterReward: 0, referralInviteeReward: 0 }; }
     return state.config;
   };
   var numberSetting = function (value, fallback) {
@@ -152,34 +164,35 @@
     return Number.isFinite(n) && n >= 0 ? n : fallback;
   };
   var applyMaintenance = async function () {
+    if (!state.user) return;
     try {
       var data = await api('/api/maintenance');
       state.maintenance = data;
       if (data.enabled) {
         var suffix = data.reopenAt ? '\nPerkiraan dibuka kembali: ' + date(data.reopenAt) : '';
         var heading = $('#dialogLayer .dialog-card h2');
-        if (!state.user) {
-          if (heading && heading.textContent === 'Website sedang maintenance') closeDialog();
-        } else {
-          var locked = state.user.role !== 'admin';
-          if ($('#dialogLayer').classList.contains('hidden') || !heading || heading.textContent !== 'Website sedang maintenance' || $('#dialogLayer').dataset.maintenanceLocked !== String(locked)) {
-            showDialog('Website sedang maintenance', (data.reason || 'Sistem sedang dalam pemeliharaan.') + suffix, { locked: locked, kind: 'warning', icon: '⚙' });
-            $('#dialogLayer').dataset.maintenanceLocked = String(locked);
-          }
+        var locked = state.user.role !== 'admin';
+        if ($('#dialogLayer').classList.contains('hidden') || !heading || heading.textContent !== 'Website sedang maintenance' || $('#dialogLayer').dataset.maintenanceLocked !== String(locked)) {
+          showDialog('Website sedang maintenance', (data.reason || 'Sistem sedang dalam pemeliharaan.') + suffix, { locked: locked, kind: 'warning', icon: '⚙' });
+          $('#dialogLayer').dataset.maintenanceLocked = String(locked);
         }
       } else if ($('#dialogLayer .dialog-card h2') && $('#dialogLayer .dialog-card h2').textContent === 'Website sedang maintenance') closeDialog();
-    } catch (e) {
-      state.maintenance = { enabled: false };
-    }
+    } catch (e) { state.maintenance = { enabled: false }; }
+  };
+  var showAnnouncement = async function () {
+    if (!state.user || state.user.announcement_seen_at) return;
     try {
       var cfg = await getConfig();
-      if (String(cfg.announcementEnabled) === 'true' || cfg.announcementEnabled === true) {
-        var key = String(cfg.announcementUpdatedAt || cfg.announcementMessage || '');
-        if (key && sessionStorage.getItem('fe_announcement_seen') !== key) {
-          sessionStorage.setItem('fe_announcement_seen', key);
-          if (!state.maintenance || !state.maintenance.enabled) showDialog(String(cfg.announcementTitle || 'Pengumuman'), String(cfg.announcementMessage || 'Ada informasi baru.'), { autoMs: 3000 });
-        }
-      }
+      if (!(String(cfg.announcementEnabled) === 'true' || cfg.announcementEnabled === true)) return;
+      var message = String(cfg.announcementMessage || '').trim();
+      if (!message) return;
+      var storageKey = 'fe_announcement_seen:' + String(state.user.id || state.user.username);
+      try { if (localStorage.getItem(storageKey) === '1') return; } catch (e) {}
+      if (state.maintenance && state.maintenance.enabled) return;
+      try { localStorage.setItem(storageKey, '1'); } catch (e) {}
+      state.user.announcement_seen_at = new Date().toISOString();
+      showDialog(String(cfg.announcementTitle || 'Pengumuman'), message, { autoMs: 6000 });
+      api('/api/announcement/seen', { method: 'POST', body: '{}' }).catch(function () { /* local storage prevents repeated popups on this device */ });
     } catch (e) { /* pengumuman gagal dimuat tidak memblokir login */ }
   };
   var closeMenu = function () {
@@ -196,7 +209,7 @@
   var navigate = async function (view) {
     if (!viewMeta[view]) view = 'dashboard';
     if (!state.user) return;
-    if (view !== 'dashboard' && view !== 'history' && view !== 'withdraw' && view !== 'chat' && state.user.role !== 'admin') {
+    if (view !== 'dashboard' && view !== 'history' && view !== 'withdraw' && view !== 'chat' && view !== 'referral' && state.user.role !== 'admin') {
       showDialog('Akses dibatasi', 'Menu ini khusus admin.', { kind: 'error' });
       return;
     }
@@ -213,6 +226,7 @@
       if (view === 'dashboard') await renderDashboard();
       else if (view === 'history') await renderHistory();
       else if (view === 'withdraw') await renderWithdraw();
+      else if (view === 'referral') await renderReferral();
       else if (view === 'chat') await renderChat();
       else if (view === 'maintenance') await renderMaintenance();
       else if (view === 'requests') await renderRequests();
@@ -235,8 +249,8 @@
     } catch (e) { setLoggedOut(); throw e; }
   };
   var loadRequestsMine = async function () {
-    var results = await Promise.all([api('/api/withdrawals').catch(function () { return []; }), api('/api/robux').catch(function () { return []; })]);
-    return { withdrawals: Array.isArray(results[0]) ? results[0] : [], robux: Array.isArray(results[1]) ? results[1] : [] };
+    var results = await Promise.all([api('/api/withdrawals').catch(function () { return []; }), api('/api/robux').catch(function () { return []; }), api('/api/diamond').catch(function () { return []; })]);
+    return { withdrawals: Array.isArray(results[0]) ? results[0] : [], robux: Array.isArray(results[1]) ? results[1] : [], diamonds: Array.isArray(results[2]) ? results[2] : [] };
   };
   var statusFor = function (status) {
     status = String(status || 'pending').toLowerCase();
@@ -249,10 +263,9 @@
     return '<span class="status ' + info[1] + '">' + info[2] + ' ' + info[0] + '</span>';
   };
   var renderDashboard = async function () {
-    var result = await api('/api/dashboard');
+    var loaded = await Promise.all([api('/api/dashboard'), api('/api/jobs'), api('/api/wallet')]);
+    var result = loaded[0], jobs = loaded[1], wallet = loaded[2];
     state.user = result.user || state.user;
-    var jobs = await api('/api/jobs');
-    var wallet = await api('/api/wallet');
     $('#headerBalance').textContent = cash(wallet.balance == null ? state.user.balance : wallet.balance);
     var jobHtml = (Array.isArray(jobs) ? jobs : []).map(function (job) {
       return '<article class="job-card"><div class="card-top"><div><h3>' + esc(job.title) + '</h3><p>' + esc(job.description || 'Ikuti instruksi job yang tersedia.') + '</p></div><span class="tag reward">+' + cash(job.reward) + '</span></div><div class="tag-list"><span class="tag">Kuota ' + esc(job.quota_used || 0) + '/' + esc(job.quota == null ? '∞' : job.quota) + '</span><span class="tag">' + (job.photo_required ? 'Foto bukti wajib' : 'Foto bukti opsional') + '</span></div>' +
@@ -313,6 +326,7 @@
     var requests = [];
     (history.withdrawals || []).forEach(function (item) { requests.push({ type: 'DANA', created_at: item.created_at, amount: item.amount, payout: item.payout_amount, fee: item.fee_amount, method: item.method, status: item.status, note: item.review_note, id: item.id }); });
     (history.robux || []).forEach(function (item) { requests.push({ type: 'ROBUX', created_at: item.created_at, amount: item.cost, details: item.robux + ' Robux · ' + item.method + ' · ' + item.username, status: item.status, note: item.review_note, id: item.id }); });
+    (history.diamonds || []).forEach(function (item) { requests.push({ type: 'DIAMOND FF', created_at: item.created_at, amount: item.cost, details: item.diamonds + ' diamond · UID ' + item.ff_uid + (item.ff_server_id ? ' · Server ' + item.ff_server_id : ''), status: item.status, note: item.review_note, id: item.id }); });
     requests.sort(function (a, b) { return new Date(b.created_at) - new Date(a.created_at); });
     var requestHtml = requests.map(function (item) {
       var status = statusFor(item.status);
@@ -326,7 +340,7 @@
     }).join('');
     $('#viewRoot').innerHTML =
       '<section class="panel"><div class="panel-heading"><div><h2>Mutasi saldo</h2><p>Uang masuk dan keluar dari akun kamu.</p></div></div><div class="stack">' + (ledger || '<div class="empty-state">Belum ada transaksi saldo.</div>') + '</div></section>' +
-      '<section class="panel"><div class="panel-heading"><div><h2>Riwayat withdraw</h2><p>DANA dan Robux dalam satu daftar.</p></div></div><div class="stack">' + (requestHtml || '<div class="empty-state">Belum ada request withdraw.</div>') + '</div></section>' +
+      '<section class="panel"><div class="panel-heading"><div><h2>Riwayat withdraw</h2><p>DANA, Robux, dan diamond FF dalam satu daftar.</p></div></div><div class="stack">' + (requestHtml || '<div class="empty-state">Belum ada request withdraw.</div>') + '</div></section>' +
       '<section class="panel"><div class="panel-heading"><div><h2>Riwayat job</h2><p>Status dari pengajuan job yang pernah dikirim.</p></div></div><div class="stack">' + (submissions || '<div class="empty-state">Belum ada pengajuan job.</div>') + '</div></section>';
   };
   var renderWithdraw = async function () {
@@ -336,6 +350,7 @@
     var rows = [];
     requests.withdrawals.forEach(function (item) { rows.push({ kind: 'DANA', amount: item.amount, payout: item.payout_amount, fee: item.fee_amount, status: item.status, at: item.created_at, note: item.review_note, details: item.destination }); });
     requests.robux.forEach(function (item) { rows.push({ kind: 'ROBUX', amount: item.cost, status: item.status, at: item.created_at, note: item.review_note, details: item.robux + ' Robux · ' + item.method + ' · ' + item.username }); });
+    (requests.diamonds || []).forEach(function (item) { rows.push({ kind: 'DIAMOND FF', amount: item.cost, status: item.status, at: item.created_at, note: item.review_note, details: item.diamonds + ' diamond · UID ' + item.ff_uid + (item.ff_server_id ? ' · Server ' + item.ff_server_id : '') }); });
     rows.sort(function (a, b) { return new Date(b.at) - new Date(a.at); });
     var requestHtml = rows.map(function (item) {
       return '<article class="history-row"><div class="card-top"><div><strong>' + esc(item.kind) + ' · potong ' + cash(item.amount) + '</strong><p class="subtle">' + esc(date(item.at)) + '</p></div>' + statusTag(item.status) + '</div><p class="subtle">' + esc(item.details || '') + '</p>' +
@@ -345,7 +360,7 @@
     var fee = numberSetting(config.danaFee, 2000);
     $('#viewRoot').innerHTML =
       '<section class="panel"><div class="panel-heading"><div><h2>Buat request</h2><p>Pilih jenis penarikan terlebih dahulu. Request akan masuk antrean admin.</p></div></div>' +
-      '<div class="withdraw-tabs" id="withdrawTabs" role="tablist" aria-label="Jenis penarikan"><span class="withdraw-tab-slider" aria-hidden="true"></span><button class="withdraw-tab active" id="tabRobux" type="button" role="tab" aria-selected="true" data-withdraw-tab="robux">ROBUX</button><button class="withdraw-tab" id="tabDana" type="button" role="tab" aria-selected="false" data-withdraw-tab="dana">DANA</button></div>' +
+      '<div class="withdraw-tabs" id="withdrawTabs" role="tablist" aria-label="Jenis penarikan"><span class="withdraw-tab-slider" aria-hidden="true"></span><button class="withdraw-tab active" id="tabRobux" type="button" role="tab" aria-selected="true" data-withdraw-tab="robux">ROBUX</button><button class="withdraw-tab" id="tabDana" type="button" role="tab" aria-selected="false" data-withdraw-tab="dana">DANA</button><button class="withdraw-tab" id="tabDiamond" type="button" role="tab" aria-selected="false" data-withdraw-tab="diamond">DIAMOND FF</button></div>' +
       '<form id="withdrawForm" class="form-grid">' +
       '<input id="withdrawType" name="type" type="hidden" value="robux">' +
       '<label class="field" id="danaAmountWrap" hidden><span>Nominal saldo yang dipotong (Rp)</span><input id="withdrawAmount" type="number" name="amount" min="1" step="1" placeholder="Contoh: 10000"></label>' +
@@ -355,6 +370,9 @@
       '<label class="field" id="robuxCountWrap" hidden><span>Jumlah Robux</span><input id="robuxCount" type="number" name="robux" min="' + esc(numberSetting(config.robuxMin, 10)) + '" step="1" placeholder="Jumlah Robux"></label>' +
       '<label class="field" id="robloxUsernameWrap" hidden><span>Username Roblox</span><input name="robloxUsername" maxlength="100" placeholder="Username Roblox"></label>' +
       '<label class="field wide" id="gamepassWrap" hidden><span>Link Game Pass</span><input name="gamepassUrl" type="url" maxlength="500" placeholder="https://www.roblox.com/..."></label>' +
+      '<label class="field" id="diamondCountWrap" hidden><span>Jumlah diamond FF</span><input id="diamondCount" name="diamonds" type="number" min="' + esc(numberSetting(config.diamondMin, 1)) + '" step="1" placeholder="Jumlah diamond"></label>' +
+      '<label class="field" id="diamondUidWrap" hidden><span>UID Free Fire</span><input name="ffUid" inputmode="numeric" pattern="[0-9]{5,20}" maxlength="20" placeholder="UID Free Fire"></label>' +
+      '<label class="field" id="diamondServerWrap" hidden><span>Server/region (opsional)</span><input name="serverId" maxlength="32" placeholder="ID server jika diperlukan"></label>' +
       '<div class="currency-note wide" id="withdrawCalc">Biaya admin DANA saat ini: ' + cash(fee) + '. Nominal ini ditampilkan sebelum request dikirim.</div>' +
       '<div class="wide"><button class="button button-primary full" type="submit">Kirim request withdraw</button></div></form></section>' +
       '<section class="panel"><div class="panel-heading"><div><h2>Riwayat withdraw</h2><p>Status diperbarui setelah admin memproses request.</p></div></div><div class="stack">' + (requestHtml || '<div class="empty-state">Belum ada request withdraw.</div>') + '</div></section>';
@@ -364,9 +382,12 @@
       var method = $('#robuxMethod').value, count = Number($('#robuxCount').value || 0);
       $('#tabRobux').classList.toggle('active', type === 'robux');
       $('#tabDana').classList.toggle('active', type === 'dana');
+      $('#tabDiamond').classList.toggle('active', type === 'diamond');
       $('#withdrawTabs').classList.toggle('is-dana', type === 'dana');
+      $('#withdrawTabs').classList.toggle('is-diamond', type === 'diamond');
       $('#tabRobux').setAttribute('aria-selected', String(type === 'robux'));
       $('#tabDana').setAttribute('aria-selected', String(type === 'dana'));
+      $('#tabDiamond').setAttribute('aria-selected', String(type === 'diamond'));
       $('#danaAmountWrap').hidden = type !== 'dana';
       $('#danaDestinationWrap').hidden = type !== 'dana';
       $('#robuxAmountInfo').hidden = type !== 'robux';
@@ -374,9 +395,15 @@
       $('#robuxCountWrap').hidden = type !== 'robux';
       $('#robloxUsernameWrap').hidden = type !== 'robux';
       $('#gamepassWrap').hidden = type !== 'robux' || method !== 'gamepass';
+      $('#diamondCountWrap').hidden = type !== 'diamond';
+      $('#diamondUidWrap').hidden = type !== 'diamond';
+      $('#diamondServerWrap').hidden = type !== 'diamond';
       if (type === 'dana') {
         var payout = amount - fee;
         $('#withdrawCalc').textContent = 'Biaya admin DANA saat ini ' + cash(fee) + '. Saldo dipotong ' + cash(amount) + '; estimasi diterima ' + cash(Math.max(0, payout)) + '.';
+      } else if (type === 'diamond') {
+        var diamondRate = numberSetting(config.diamondRate, 0), diamonds = Number($('#diamondCount').value || 0);
+        $('#withdrawCalc').textContent = diamondRate > 0 ? 'Harga ' + cash(diamondRate) + ' per diamond. ' + diamonds + ' diamond akan memotong saldo ' + cash(diamondRate * diamonds) + '. Pengiriman diproses manual oleh admin.' : 'Penarikan diamond FF belum diaktifkan. Admin perlu mengatur harga per diamond terlebih dahulu.';
       } else {
         var rate = numberSetting(method === 'gamepass' ? config.gamepassRate : config.usernameRate, method === 'gamepass' ? 170 : 230);
         var cost = count * rate;
@@ -389,7 +416,7 @@
         updateCalc();
       });
     });
-    ['change', 'input'].forEach(function (evt) { $('#robuxMethod').addEventListener(evt, updateCalc); $('#withdrawAmount').addEventListener(evt, updateCalc); $('#robuxCount').addEventListener(evt, updateCalc); });
+    ['change', 'input'].forEach(function (evt) { $('#robuxMethod').addEventListener(evt, updateCalc); $('#withdrawAmount').addEventListener(evt, updateCalc); $('#robuxCount').addEventListener(evt, updateCalc); $('#diamondCount').addEventListener(evt, updateCalc); });
     updateCalc();
     form.addEventListener('submit', async function (event) {
       event.preventDefault();
@@ -401,6 +428,12 @@
           if (amount <= fee) throw new Error('Nominal penarikan harus lebih besar dari biaya admin DANA ' + cash(fee) + '.');
           if (!form.destination.value.trim()) throw new Error('Nomor DANA wajib diisi.');
           await api('/api/withdrawals', { method: 'POST', body: JSON.stringify({ method: 'DANA', amount: amount, destination: form.destination.value.trim() }) });
+        } else if ($('#withdrawType').value === 'diamond') {
+          var diamonds = Number(form.diamonds.value);
+          if (!Number.isSafeInteger(diamonds) || diamonds < numberSetting(config.diamondMin, 1)) throw new Error('Jumlah diamond di bawah batas minimum.');
+          if (numberSetting(config.diamondRate, 0) < 1) throw new Error('Harga diamond FF belum diatur admin.');
+          if (!/^\d{5,20}$/.test(form.ffUid.value.trim())) throw new Error('UID Free Fire harus berupa 5–20 angka.');
+          await api('/api/diamond', { method: 'POST', body: JSON.stringify({ diamonds: diamonds, ffUid: form.ffUid.value.trim(), serverId: form.serverId.value.trim() }) });
         } else {
           var robux = Number(form.robux.value);
           var methodName = form.elements.namedItem('method').value;
@@ -511,27 +544,28 @@
     return Number.isNaN(d.getTime()) ? '' : new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
   };
   var renderRequests = async function () {
-    var result = await Promise.all([api('/api/admin/withdrawals'), api('/api/admin/robux'), api('/api/admin/users')]);
+    var result = await Promise.all([api('/api/admin/withdrawals'), api('/api/admin/robux'), api('/api/admin/diamond'), api('/api/admin/users')]);
     var requests = [];
     (result[0] || []).forEach(function (item) { requests.push(Object.assign({ kind: 'dana' }, item)); });
     (result[1] || []).forEach(function (item) { requests.push(Object.assign({ kind: 'robux' }, item)); });
+    (result[2] || []).forEach(function (item) { requests.push(Object.assign({ kind: 'diamond' }, item)); });
     requests.sort(function (a, b) { return new Date(b.created_at) - new Date(a.created_at); });
     var users = {};
-    (result[2] || []).forEach(function (u) { users[u.id] = u.username || u.id; });
+    (result[3] || []).forEach(function (u) { users[u.id] = u.username || u.id; });
     var pending = requests.filter(function (r) { return r.status === 'pending'; }).length;
     state.pendingCount = pending;
     $('#pendingBadge').textContent = String(pending);
     $('#pendingBadge').classList.toggle('hidden', pending === 0);
-    $('#viewRoot').innerHTML = '<section class="panel"><div class="panel-heading"><div><h2>Semua request withdraw</h2><p>Request Dana dan Robux tergabung di bawah. Terima hanya setelah pembayaran benar-benar selesai.</p></div><button id="enableNotify" class="button button-soft" type="button">Aktifkan notifikasi</button></div><div class="stack">' + (requests.map(function (item) {
+    $('#viewRoot').innerHTML = '<section class="panel"><div class="panel-heading"><div><h2>Semua request withdraw</h2><p>Request DANA, Robux, dan diamond FF tergabung di bawah. Selesaikan pengiriman manual sebelum menyetujui.</p></div><button id="enableNotify" class="button button-soft" type="button">Aktifkan notifikasi</button></div><div class="stack">' + (requests.map(function (item) {
       var id = item.kind === 'dana' ? item.id : item.id;
       var pendingItem = item.status === 'pending';
-      var methodText = item.kind === 'dana' ? 'DANA' : 'ROBUX · ' + (item.method === 'gamepass' ? 'Game Pass' : 'Username');
+      var methodText = item.kind === 'dana' ? 'DANA' : item.kind === 'diamond' ? 'DIAMOND FREE FIRE' : 'ROBUX · ' + (item.method === 'gamepass' ? 'Game Pass' : 'Username');
       var debit = item.kind === 'dana' ? item.amount : item.cost;
       var payout = item.kind === 'dana' ? item.payout_amount : null;
-      var detail = item.kind === 'dana' ? 'Tujuan: ' + item.destination : 'Username Roblox: ' + item.username + (item.method === 'gamepass' ? ' · Game Pass: ' + item.gamepass_url : '');
+      var detail = item.kind === 'dana' ? 'Tujuan: ' + item.destination : item.kind === 'diamond' ? 'UID Free Fire: ' + item.ff_uid + (item.ff_server_id ? ' · Server: ' + item.ff_server_id : '') : 'Username Roblox: ' + item.username + (item.method === 'gamepass' ? ' · Game Pass: ' + item.gamepass_url : '');
       return '<article class="request-card"><div class="card-top"><div><h3>' + esc(methodText) + '</h3><p>@' + esc(users[item.user_id] || 'user') + ' · ' + esc(date(item.created_at)) + '</p></div>' + statusTag(item.status) + '</div>' +
-      '<div class="request-meta"><div><small>Saldo dipotong</small><strong>' + cash(debit) + '</strong></div><div><small>' + (item.kind === 'dana' ? 'Dana dikirim' : 'Jumlah Robux') + '</small><strong>' + (item.kind === 'dana' ? cash(payout == null ? debit : payout) : esc(item.robux + ' Robux')) + '</strong></div></div>' +
-      (item.kind === 'dana' ? '<p>' + esc(detail) + ' · Biaya admin ' + cash(item.fee_amount || Math.max(0, Number(debit) - Number(payout == null ? debit : payout))) + '</p>' : '<p>' + esc(detail) + '<br>Tarif: ' + cash(item.rate) + ' per Robux</p>') +
+      '<div class="request-meta"><div><small>Saldo dipotong</small><strong>' + cash(debit) + '</strong></div><div><small>' + (item.kind === 'dana' ? 'Dana dikirim' : item.kind === 'diamond' ? 'Jumlah diamond' : 'Jumlah Robux') + '</small><strong>' + (item.kind === 'dana' ? cash(payout == null ? debit : payout) : item.kind === 'diamond' ? esc(item.diamonds + ' diamond') : esc(item.robux + ' Robux')) + '</strong></div></div>' +
+      (item.kind === 'dana' ? '<p>' + esc(detail) + ' · Biaya admin ' + cash(item.fee_amount || Math.max(0, Number(debit) - Number(payout == null ? debit : payout))) + '</p>' : '<p>' + esc(detail) + '<br>Tarif: ' + cash(item.rate) + (item.kind === 'diamond' ? ' per diamond' : ' per Robux') + '</p>') +
       (item.review_note ? '<div class="inline-alert danger-alert">Alasan penolakan: ' + esc(item.review_note) + '</div>' : '') +
       (pendingItem ? '<div class="button-row"><button class="button button-danger" type="button" data-review="reject" data-kind="' + item.kind + '" data-id="' + esc(id) + '">Tolak</button><button class="button button-success" type="button" data-review="accept" data-kind="' + item.kind + '" data-id="' + esc(id) + '">Terima</button></div>' : '') +
       '</article>';
@@ -555,7 +589,7 @@
             return { title: 'Request ditolak', message: 'Alasan tersimpan dan saldo yang ditahan sudah dikembalikan.', options: { autoMs: 3000, kind: 'warning', icon: '×' } };
           });
         } else {
-          showDialog('Konfirmasi penyelesaian', 'Pastikan Dana/Robux sudah benar-benar dikirim sebelum mengonfirmasi request ini.', { kind: 'warning', icon: '!' });
+          showDialog('Konfirmasi penyelesaian', 'Pastikan DANA, Robux, atau diamond FF benar-benar sudah dikirim sebelum mengonfirmasi request ini.', { kind: 'warning', icon: '!' });
           var layer = $('#dialogLayer');
           var oldOk = $('#dialogOk');
           oldOk.textContent = 'Sudah selesai, terima';
@@ -573,7 +607,7 @@
     });
   };
   var reviewRequest = async function (kind, id, accept, note) {
-    var route = kind === 'dana' ? 'withdrawals' : 'robux';
+    var route = kind === 'dana' ? 'withdrawals' : kind === 'diamond' ? 'diamond' : 'robux';
     var status = accept ? (kind === 'dana' ? 'paid' : 'completed') : 'rejected';
     await api('/api/admin/' + route + '/' + encodeURIComponent(id) + '/review', { method: 'POST', body: JSON.stringify({ status: status, note: note }) });
   };
@@ -651,6 +685,21 @@
       finally { button.disabled = false; }
     });
   };
+  var renderReferral = async function () {
+    var data = await api('/api/referral');
+    var inviteUrl = window.location.origin + '/?ref=' + encodeURIComponent(data.code);
+    $('#viewRoot').innerHTML = '<section class="panel"><div class="panel-heading"><div><h2>Undang teman</h2><p>Bonus diberikan kepada kamu dan temanmu setelah email teman terverifikasi serta job pertamanya disetujui admin. Tidak ada batas jumlah undangan.</p></div></div>' +
+      '<div class="request-meta"><div><small>Total undangan</small><strong>' + esc(data.invitedCount || 0) + '</strong></div><div><small>Referral berhasil</small><strong>' + esc(data.qualifiedCount || 0) + '</strong></div><div><small>Total bonus pengundang</small><strong>' + cash(data.earned || 0) + '</strong></div></div>' +
+      '<label class="field wide"><span>Kode referral kamu</span><div class="button-row"><input id="referralCodeValue" readonly value="' + esc(data.code) + '"><button id="copyReferralCode" class="button button-soft" type="button">Salin kode</button></div></label>' +
+      '<label class="field wide"><span>Link undangan</span><div class="button-row"><input id="referralLinkValue" readonly value="' + esc(inviteUrl) + '"><button id="copyReferralLink" class="button button-primary" type="button">Salin link</button></div></label>' +
+      '<div class="currency-note">Reward pengundang: ' + cash(data.inviterReward || 0) + ' · Reward teman baru: ' + cash(data.inviteeReward || 0) + '. Admin bisa mengubah kedua nominal dari menu Setting UATS.</div></section>';
+    $('#copyReferralCode').addEventListener('click', function () {
+      if (navigator.clipboard) navigator.clipboard.writeText(data.code).then(function () { say('Kode referral disalin.'); }).catch(function () { showDialog('Salin manual', 'Pilih dan salin kode referral di kotak.', { kind: 'info' }); });
+    });
+    $('#copyReferralLink').addEventListener('click', function () {
+      if (navigator.clipboard) navigator.clipboard.writeText(inviteUrl).then(function () { say('Link referral disalin.'); }).catch(function () { showDialog('Salin manual', 'Pilih dan salin link referral di kotak.', { kind: 'info' }); });
+    });
+  };
   var renderCreateJob = function () {
     $('#viewRoot').innerHTML = '<section class="panel"><div class="panel-heading"><div><h2>Job baru</h2><p>Kuota menghitung pengajuan yang masih aktif dan yang disetujui. Pengajuan yang ditolak membebaskan satu kuota.</p></div></div><form id="jobCreateForm" class="form-grid">' +
       '<label class="field wide"><span>NAMA JOB</span><input name="title" maxlength="160" required placeholder="Nama pekerjaan"></label>' +
@@ -674,45 +723,83 @@
   var renderPayoutSettings = async function () {
     var result = await api('/api/admin/settings'), cfg = {};
     (result || []).forEach(function (item) { cfg[item.key] = item.value; });
-    $('#viewRoot').innerHTML = '<section class="panel"><div class="panel-heading"><div><h2>Setting metode</h2><p>Pilih metode dulu, lalu isi satu tarif atau biaya untuk metode tersebut.</p></div></div><form id="payoutForm" class="form-grid">' +
-      '<label class="field wide"><span>SETTING METODE</span><select name="method" id="payoutMethod"><option value="gamepass">Robux — Game Pass</option><option value="username">Robux — Via Username</option><option value="dana">DANA</option></select></label>' +
-      '<label class="field wide" id="payoutValueWrap"><span id="payoutLabel">HARGA PER 1 ROBUX (Rp)</span><input id="payoutValue" name="value" type="number" min="0" step="1" required></label>' +
-      '<label class="field wide"><span>Minimal Robux (berlaku untuk kedua metode Robux)</span><input id="robuxMinSetting" type="number" min="1" step="1" value="' + esc(cfg.robuxMin == null ? 10 : cfg.robuxMin) + '" required></label>' +
-      '<div class="currency-note wide" id="payoutHelp">Tarif yang disimpan akan langsung digunakan ketika request baru dibuat.</div>' +
-      '<div class="wide"><button class="button button-primary" type="submit">Simpan setting metode</button></div></form></section>';
-    var method = $('#payoutMethod'), value = $('#payoutValue'), label = $('#payoutLabel'), help = $('#payoutHelp');
-    var values = { gamepass: cfg.gamepassRate == null ? 170 : cfg.gamepassRate, username: cfg.usernameRate == null ? 230 : cfg.usernameRate, dana: cfg.danaFee == null ? 2000 : cfg.danaFee };
-    var update = function () {
-      value.value = values[method.value];
-      label.textContent = method.value === 'dana' ? 'BIAYA ADMIN DANA (Rp)' : 'HARGA ROBUX PER 1 ROBUX (Rp)';
-      help.textContent = method.value === 'dana' ? 'Biaya ini dikurangi dari nominal penarikan. Nominal saldo yang ditahan tetap sebesar jumlah yang diminta; admin mengirim nominal setelah dipotong biaya admin.' : 'Tarif per Robux dikalikan jumlah Robux untuk menghitung saldo yang akan dipotong.';
+    var rates = {
+      gamepass: cfg.gamepassRate == null ? 170 : cfg.gamepassRate,
+      username: cfg.usernameRate == null ? 230 : cfg.usernameRate,
+      diamond: cfg.diamondRate == null ? 0 : cfg.diamondRate,
+      dana: cfg.danaFee == null ? 2000 : cfg.danaFee
     };
-    method.addEventListener('change', update); update();
-    $('#payoutForm').addEventListener('submit', async function (event) {
-      event.preventDefault();
-      var button = $('button[type="submit"]', event.currentTarget), amount = Number(value.value), min = Number($('#robuxMinSetting').value);
-      if (!Number.isSafeInteger(amount) || amount < 0 || (method.value !== 'dana' && amount < 1)) { showDialog('Nominal tidak valid', 'Masukkan angka yang valid untuk metode terpilih.', { kind: 'error' }); return; }
-      if (!Number.isSafeInteger(min) || min < 1) { showDialog('Batas minimum tidak valid', 'Minimal Robux harus minimal 1.', { kind: 'error' }); return; }
-      button.disabled = true;
-      try {
-        var payload = { robuxMin: min };
-        if (method.value === 'dana') payload.danaFee = amount;
-        if (method.value === 'gamepass') payload.gamepassRate = amount;
-        if (method.value === 'username') payload.usernameRate = amount;
-        await api('/api/admin/settings', { method: 'POST', body: JSON.stringify(payload) });
-        showDialog('Setting tersimpan', 'Pengaturan metode penarikan berhasil diperbarui.', { autoMs: 3000 });
-        await renderPayoutSettings();
-      } catch (error) { showDialog('Setting gagal disimpan', error.message, { kind: 'error' }); }
-      finally { button.disabled = false; }
-    });
+    $('#viewRoot').innerHTML = '<div class="withdraw-tabs settings-tabs" id="settingsTabs" role="tablist" aria-label="Kategori setting"><span class="withdraw-tab-slider" aria-hidden="true"></span><button class="withdraw-tab active" type="button" id="settingsPayoutTab" role="tab" aria-selected="true">Penarikan</button><button class="withdraw-tab" type="button" id="settingsReferralTab" role="tab" aria-selected="false">Referral</button></div><div id="settingsPanel"></div>';
+    var panel = $('#settingsPanel');
+    var showSection = function (which) {
+      $('#settingsTabs').classList.toggle('is-dana', which === 'referral');
+      $('#settingsPayoutTab').classList.toggle('active', which === 'payout');
+      $('#settingsReferralTab').classList.toggle('active', which === 'referral');
+      $('#settingsPayoutTab').setAttribute('aria-selected', String(which === 'payout'));
+      $('#settingsReferralTab').setAttribute('aria-selected', String(which === 'referral'));
+      if (which === 'payout') {
+        panel.innerHTML = '<section class="panel"><div class="panel-heading"><div><h2>Harga dan biaya penarikan</h2><p>Pengaturan berlaku untuk permintaan baru.</p></div></div><form id="payoutForm" class="form-grid">' +
+          '<label class="field wide"><span>Jenis pengaturan</span><select name="method" id="payoutMethod"><option value="gamepass">Robux — Game Pass</option><option value="username">Robux — Via Username</option><option value="diamond">Diamond Free Fire</option><option value="dana">DANA</option></select></label>' +
+          '<label class="field wide"><span id="payoutLabel">Harga per 1 Robux (Rp)</span><input id="payoutValue" name="value" type="number" min="0" max="1000000000" step="1" required></label>' +
+          '<label class="field wide"><span>Minimum Robux</span><input id="robuxMinSetting" type="number" min="1" max="1000000" step="1" value="' + esc(cfg.robuxMin == null ? 10 : cfg.robuxMin) + '" required></label>' +
+          '<label class="field wide"><span>Minimum diamond FF</span><input id="diamondMinSetting" type="number" min="1" max="1000000" step="1" value="' + esc(cfg.diamondMin == null ? 1 : cfg.diamondMin) + '" required></label>' +
+          '<div class="currency-note wide" id="payoutHelp">Tarif yang disimpan digunakan untuk permintaan baru.</div><div class="wide"><button class="button button-primary" type="submit">Simpan setting penarikan</button></div></form></section>';
+        var method = $('#payoutMethod'), value = $('#payoutValue'), label = $('#payoutLabel'), help = $('#payoutHelp');
+        var update = function () {
+          value.value = rates[method.value];
+          label.textContent = method.value === 'dana' ? 'Biaya admin DANA (Rp)' : method.value === 'diamond' ? 'Harga per 1 diamond FF (Rp)' : 'Harga per 1 Robux (Rp)';
+          help.textContent = method.value === 'dana' ? 'Biaya dipotong dari nominal saldo yang diminta; sisa nominal dikirim ke DANA.' : method.value === 'diamond' ? 'Harga dikalikan jumlah diamond. Admin mengirim diamond secara manual setelah permintaan disetujui.' : 'Tarif per Robux dikalikan jumlah Robux.';
+        };
+        method.addEventListener('change', update); update();
+        $('#payoutForm').addEventListener('submit', async function (event) {
+          event.preventDefault();
+          var button = $('button[type="submit"]', event.currentTarget), amount = Number(value.value), minRobux = Number($('#robuxMinSetting').value), minDiamond = Number($('#diamondMinSetting').value);
+          if (!Number.isSafeInteger(amount) || amount < 0 || amount > 1000000000 || (method.value !== 'dana' && method.value !== 'diamond' && amount < 1)) { showDialog('Nominal tidak valid', 'Masukkan angka harga/biaya yang valid.', { kind: 'error' }); return; }
+          if (!Number.isSafeInteger(minRobux) || minRobux < 1 || !Number.isSafeInteger(minDiamond) || minDiamond < 1) { showDialog('Batas minimum tidak valid', 'Minimum Robux dan diamond harus minimal 1.', { kind: 'error' }); return; }
+          button.disabled = true;
+          try {
+            var payload = { robuxMin: minRobux, diamondMin: minDiamond };
+            if (method.value === 'dana') payload.danaFee = amount;
+            if (method.value === 'diamond') payload.diamondRate = amount;
+            if (method.value === 'gamepass') payload.gamepassRate = amount;
+            if (method.value === 'username') payload.usernameRate = amount;
+            await api('/api/admin/settings', { method: 'POST', body: JSON.stringify(payload) });
+            showDialog('Setting tersimpan', 'Harga dan biaya penarikan berhasil diperbarui.', { autoMs: 2500 });
+            await renderPayoutSettings();
+          } catch (error) { showDialog('Setting gagal disimpan', error.message, { kind: 'error' }); }
+          finally { button.disabled = false; }
+        });
+      } else {
+        panel.innerHTML = '<section class="panel"><div class="panel-heading"><div><h2>Reward referral</h2><p>Bonus diberikan kepada kedua pihak setelah email terverifikasi dan job pertama disetujui. Jumlah undangan tidak dibatasi.</p></div></div><form id="referralSettingsForm" class="form-grid">' +
+          '<label class="field wide"><span>Reward untuk pengundang (Rp)</span><input name="referralInviterReward" type="number" min="0" max="1000000000" step="1" value="' + esc(cfg.referralInviterReward == null ? 0 : cfg.referralInviterReward) + '" required></label>' +
+          '<label class="field wide"><span>Reward untuk pengguna baru (Rp)</span><input name="referralInviteeReward" type="number" min="0" max="1000000000" step="1" value="' + esc(cfg.referralInviteeReward == null ? 0 : cfg.referralInviteeReward) + '" required></label>' +
+          '<div class="currency-note wide">Reward masuk langsung ke saldo setelah kriteria terpenuhi. Isi 0 untuk menonaktifkan reward bagi pihak terkait.</div><div class="wide"><button class="button button-primary" type="submit">Simpan reward referral</button></div></form></section>';
+        $('#referralSettingsForm').addEventListener('submit', async function (event) {
+          event.preventDefault();
+          var form = event.currentTarget, button = $('button[type="submit"]', form), inviter = Number(form.referralInviterReward.value), invitee = Number(form.referralInviteeReward.value);
+          if (![inviter, invitee].every(function (n) { return Number.isSafeInteger(n) && n >= 0 && n <= 1000000000; })) { showDialog('Reward tidak valid', 'Reward harus berupa angka bulat nol atau lebih.', { kind: 'error' }); return; }
+          button.disabled = true;
+          try {
+            await api('/api/admin/settings', { method: 'POST', body: JSON.stringify({ referralInviterReward: inviter, referralInviteeReward: invitee }) });
+            cfg.referralInviterReward = inviter;
+            cfg.referralInviteeReward = invitee;
+            showDialog('Reward referral tersimpan', 'Reward untuk kedua pihak berhasil diperbarui.', { autoMs: 2500 });
+          } catch (error) { showDialog('Gagal menyimpan reward', error.message, { kind: 'error' }); }
+          finally { button.disabled = false; }
+        });
+      }
+    };
+    $('#settingsPayoutTab').addEventListener('click', function () { showSection('payout'); });
+    $('#settingsReferralTab').addEventListener('click', function () { showSection('referral'); });
+    showSection('payout');
   };
   var startRequestPolling = function () {
     clearInterval(state.pollTimer);
     if (!state.user || state.user.role !== 'admin') return;
     var check = async function () {
       try {
-        var r = await Promise.all([api('/api/admin/withdrawals'), api('/api/admin/robux')]);
-        var count = (r[0] || []).filter(function (x) { return x.status === 'pending'; }).length + (r[1] || []).filter(function (x) { return x.status === 'pending'; }).length;
+        var r = await Promise.all([api('/api/admin/withdrawals'), api('/api/admin/robux'), api('/api/admin/diamond')]);
+        var count = (r[0] || []).filter(function (x) { return x.status === 'pending'; }).length + (r[1] || []).filter(function (x) { return x.status === 'pending'; }).length + (r[2] || []).filter(function (x) { return x.status === 'pending'; }).length;
         if (state.pendingCount !== null && count > state.pendingCount && state.notificationReady && 'Notification' in window) new Notification('Request withdraw baru', { body: 'Ada ' + (count - state.pendingCount) + ' request baru di antrean.' });
         state.pendingCount = count;
         $('#pendingBadge').textContent = String(count);
@@ -723,24 +810,50 @@
     state.pollTimer = setInterval(check, 30000);
   };
   var bindTopLevel = function () {
+    try { var refParam = new URLSearchParams(window.location.search).get('ref'); if (refParam && !$('#registerReferral').value) $('#registerReferral').value = refParam.toUpperCase().slice(0, 24); } catch (e) {}
     $('#switchAuth').addEventListener('click', function () { setAuthMode($('#registerForm').classList.contains('hidden') ? 'register' : 'login'); });
+    $('#openVerify').addEventListener('click', function () { $('#verifyEmail').value = $('#registerEmail').value.trim() || $('#loginEmail').value.trim(); setAuthMode('verify'); });
     $('#registerForm').addEventListener('submit', async function (event) {
       event.preventDefault();
-      var form = event.currentTarget, button = $('button[type="submit"]', form), username = form.username.value.trim(), password = form.password.value;
+      var form = event.currentTarget, button = $('button[type="submit"]', form), username = form.username.value.trim(), email = form.email.value.trim().toLowerCase(), password = form.password.value;
       if (password !== form.confirm.value) { authMessage('Konfirmasi password tidak sama.'); return; }
-      button.disabled = true; button.textContent = 'Membuat akun…';
+      button.disabled = true; button.textContent = 'Mengirim kode…';
       try {
-        var result = await api('/api/register', { method: 'POST', body: JSON.stringify({ username: username, password: password }) });
-        showDialog('Berhasil daftar', 'Akun berhasil dibuat. Kamu akan dialihkan ke dashboard dalam 3 detik.', { autoMs: 3000, onClose: function () { setLoggedIn(result.user); } });
+        var result = await api('/api/register', { method: 'POST', body: JSON.stringify({ username: username, email: email, password: password, referralCode: form.referralCode.value.trim() }) });
+        state.pendingEmail = email;
+        $('#verifyEmail').value = email;
+        setAuthMode('verify');
+        authMessage(result.message || 'Kode verifikasi diminta dikirim ke email kamu.');
       } catch (error) { authMessage(error.message); }
       finally { button.disabled = false; button.textContent = 'Daftar'; }
+    });
+    $('#verifyForm').addEventListener('submit', async function (event) {
+      event.preventDefault();
+      var form = event.currentTarget, button = $('button[type="submit"]', form), email = form.email.value.trim().toLowerCase(), code = form.code.value.trim();
+      button.disabled = true; button.textContent = 'Memverifikasi…';
+      try {
+        var result = await api('/api/email/verify', { method: 'POST', body: JSON.stringify({ email: email, code: code }) });
+        state.pendingEmail = '';
+        await setLoggedIn(result.user);
+        say('Email berhasil diverifikasi.');
+      } catch (error) { authMessage(error.message); }
+      finally { button.disabled = false; button.textContent = 'Verifikasi email'; }
+    });
+    $('#resendCode').addEventListener('click', async function () {
+      var email = $('#verifyEmail').value.trim().toLowerCase(), button = $('#resendCode');
+      button.disabled = true; button.textContent = 'Meminta kode…';
+      try {
+        var result = await api('/api/email/resend', { method: 'POST', body: JSON.stringify({ email: email }) });
+        authMessage(result.message || 'Kode baru diminta dikirim. Periksa inbox dan folder spam.');
+      } catch (error) { authMessage(error.message); }
+      finally { button.disabled = false; button.textContent = 'Kirim ulang kode'; }
     });
     $('#loginForm').addEventListener('submit', async function (event) {
       event.preventDefault();
       var form = event.currentTarget, button = $('button[type="submit"]', form);
       button.disabled = true; button.textContent = 'Memeriksa…';
       try {
-        var result = await api('/api/login', { method: 'POST', body: JSON.stringify({ username: form.username.value.trim(), password: form.password.value }) });
+        var result = await api('/api/login', { method: 'POST', body: JSON.stringify({ email: form.email.value.trim(), password: form.password.value }) });
         showDialog('Login berhasil', 'Kamu akan dialihkan ke dashboard dalam 3 detik.', { autoMs: 3000, onClose: function () { setLoggedIn(result.user); } });
       } catch (error) { authMessage(error.message); }
       finally { button.disabled = false; button.textContent = 'Login'; }
@@ -762,8 +875,6 @@
     });
   };
   var boot = async function () {
-    await applyMaintenance();
-    setInterval(applyMaintenance, 30000);
     try {
       var result = await api('/api/me');
       await setLoggedIn(result.user);

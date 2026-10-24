@@ -21,16 +21,25 @@
       <div id="authNotice" class="inline-message hidden" role="status"></div>
       <form id="registerForm" class="form-stack">
         <label class="field"><span>Username</span><input id="registerUsername" name="username" autocomplete="username" minlength="3" maxlength="24" pattern="[A-Za-z0-9_]{3,24}" placeholder="Buat username" required><small>3–24 karakter, huruf, angka, atau underscore.</small></label>
+        <label class="field"><span>Email aktif</span><input id="registerEmail" name="email" type="email" autocomplete="email" maxlength="254" placeholder="nama@email.com" required></label>
+        <label class="field"><span>Kode referral (opsional)</span><input id="registerReferral" name="referralCode" maxlength="24" autocomplete="off" placeholder="Masukkan kode teman jika ada"></label>
         <label class="field"><span>Password</span><input id="registerPassword" name="password" type="password" autocomplete="new-password" minlength="8" placeholder="Minimal 8 karakter" required></label>
         <label class="field"><span>Konfirmasi Password</span><input id="registerConfirm" name="confirm" type="password" autocomplete="new-password" minlength="8" placeholder="Ulangi password" required></label>
         <button class="button button-primary full" type="submit">Daftar</button>
       </form>
       <form id="loginForm" class="form-stack hidden">
-        <label class="field"><span>Username</span><input id="loginUsername" name="username" autocomplete="username" placeholder="Username kamu" required></label>
+        <label class="field"><span>Email</span><input id="loginEmail" name="email" type="text" inputmode="email" autocomplete="username" placeholder="Email kamu (akun lama bisa pakai username)" required></label>
         <label class="field"><span>Password</span><input id="loginPassword" name="password" type="password" autocomplete="current-password" placeholder="Password" required></label>
         <button class="button button-primary full" type="submit">Login</button>
       </form>
+      <form id="verifyForm" class="form-stack hidden">
+        <label class="field"><span>Email untuk verifikasi</span><input id="verifyEmail" name="email" type="email" autocomplete="email" required></label>
+        <label class="field"><span>Kode verifikasi</span><input id="verifyCode" name="code" inputmode="numeric" pattern="[0-9]{6,8}" minlength="6" maxlength="8" autocomplete="one-time-code" placeholder="Masukkan kode dari email" required></label>
+        <button class="button button-primary full" type="submit">Verifikasi email</button>
+        <button id="resendCode" class="button button-soft full" type="button">Kirim ulang kode</button>
+      </form>
       <p class="auth-switch"><span id="authSwitchText">Sudah punya akun?</span> <button id="switchAuth" class="text-button" type="button">Login</button></p>
+      <p id="openVerifyWrap" class="auth-switch"><button id="openVerify" class="text-button" type="button">Sudah daftar? Lanjut verifikasi email</button></p>
     </div>
   </div>
 </section>
@@ -49,6 +58,7 @@
       <button class="nav-link active" data-view="dashboard" type="button"><span>⌂</span>Dashboard</button>
       <button class="nav-link" data-view="history" type="button"><span>↺</span>Riwayat</button>
       <button class="nav-link" data-view="withdraw" type="button"><span>⇧</span>Withdraw</button>
+      <button class="nav-link" data-view="referral" type="button"><span>♧</span>Referral</button>
       <button class="nav-link" data-view="chat" type="button"><span>☷</span>Global Chat</button>
     </div>
     <div id="adminNav" class="drawer-group hidden"><span class="drawer-group-label">ADMIN</span>
@@ -57,7 +67,7 @@
       <button class="nav-link" data-view="codes" type="button"><span>◇</span>Create Unickcode</button>
       <button class="nav-link" data-view="create-job" type="button"><span>＋</span>Create Job</button>
       <button class="nav-link" data-view="review-jobs" type="button"><span>✓</span>Review Job</button>
-      <button class="nav-link" data-view="payout-settings" type="button"><span>◎</span>Setting Penarikan</button>
+      <button class="nav-link" data-view="payout-settings" type="button"><span>◎</span>Setting UATS</button>
     </div>
     <div class="drawer-foot"><span id="drawerRole">Pengguna</span><button id="drawerLogout" class="nav-link" type="button"><span>↗</span>Keluar akun</button></div>
   </aside>

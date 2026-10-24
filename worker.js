@@ -92,7 +92,7 @@ const body = async req => {
 };
 const usernameOK = u => typeof u==="string" && /^[A-Za-z0-9_]{3,24}$/.test(u);
 const emailFor = u => u.toLowerCase()+"@"+AUTH_HOST;
-const safeProfile = p => p ? ({id:p.id, username:p.username, role:p.role, balance:Number(p.balance||0), reserved_balance:Number(p.reserved_balance||0), created_at:p.created_at}) : null;
+const safeProfile = p => p ? ({id:p.id, username:p.username, email:p.email||null, email_verified_at:p.email_verified_at||null, emailVerified:!!p.email_verified_at, referral_code:p.referral_code||null, announcement_seen_at:p.announcement_seen_at||null, role:p.role, balance:Number(p.balance||0), reserved_balance:Number(p.reserved_balance||0), created_at:p.created_at}) : null;
 async function current(request, env) {
   const token = parseCookies(request)[COOKIE] || (request.headers.get("Authorization")||"").replace(/^Bearer\s+/i,"");
   if (!token) return null;
@@ -160,6 +160,7 @@ async function handle(request,env) {
     if(method==="POST" && (
       path==="/api/withdrawals" ||
       path==="/api/robux" ||
+      path==="/api/diamond" ||
       path==="/api/codes/redeem" ||
       (path==="/api/chat" && method==="POST") ||
       (path.startsWith("/api/jobs/") && path.endsWith("/submit"))
@@ -167,73 +168,72 @@ async function handle(request,env) {
       await ensureMaintenanceOff(env);
     }
     if((path==="/api/register"||path==="/api/auth/register")&&method==="POST") {
-      const b=await body(request), username=String(b.username||"").trim(), password=String(b.password||"");
-      if(!usernameOK(username)) return fail("Username harus 3–24 karakter (huruf, angka, underscore)");
-      if(password.length<8||!/[A-Za-z]/.test(password)||!/[0-9]/.test(password)) return fail("Password minimal 8 karakter dan harus mengandung huruf serta angka");
+      const b=await body(request), username=String(b.username||"").trim(), email=String(b.email||"").trim().toLowerCase(), password=String(b.password||"");
+      const referralCode=String(b.referralCode||b.referral_code||"").trim().toUpperCase();
+      if(!usernameOK(username)) return fail("Username harus 3–24 karakter (huruf, angka, underscore)",400,cors(request,env));
+      if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return fail("Masukkan alamat email yang valid.",400,cors(request,env));
+      if(password.length<8||!/[A-Za-z]/.test(password)||!/[0-9]/.test(password)) return fail("Password minimal 8 karakter dan harus mengandung huruf serta angka",400,cors(request,env));
       const exists=await rest(env,"profiles","username=ilike."+encodeURIComponent(username)+"&select=id");
-      if(exists.length) return fail("Username sudah digunakan",409);
-      // This app uses synthetic internal emails for username-only accounts. Public signup can
-      // fail with an Auth 500 when Supabase confirmation-email delivery is enabled. Create the
-      // account server-side as confirmed, using the secret key, so no email is sent.
-      const created=await sbAdmin(env,"/auth/v1/admin/users",{method:"POST",body:JSON.stringify({
-        email:emailFor(username),
-        password,
-        email_confirm:true,
-        user_metadata:{username}
-      })});
-      if(!created?.id) return fail("Pendaftaran gagal");
-      const profile = {
-  id: created.id,
-  username,
-  role: "user",
-  balance: 0,
-  reserved_balance: 0,
-  disabled: false
-};
-
-try {
-  await rest(
-    env,
-    "profiles",
-    "on_conflict=id",
-    {
-      method: "POST",
-      headers: {
-        Prefer: "resolution=merge-duplicates,return=minimal"
-      },
-      body: JSON.stringify(profile)
+      if(exists.length) return fail("Username sudah digunakan",409,cors(request,env));
+      let referredBy=null;
+      if(referralCode) {
+        const inviter=(await rest(env,"profiles","referral_code=eq."+encodeURIComponent(referralCode)+"&select=id"))[0];
+        if(!inviter) return fail("Kode referral tidak ditemukan.",400,cors(request,env));
+        referredBy=inviter.id;
+      }
+      const created=await sb(env,"/auth/v1/signup",{method:"POST",body:JSON.stringify({email,password,data:{username}})});
+      const authUser=created?.user||created;
+      if(!authUser?.id) return fail("Pendaftaran belum berhasil. Periksa email dan coba lagi.",400,cors(request,env));
+      if(Array.isArray(authUser.identities)&&authUser.identities.length===0) {
+        return fail("Email sudah terdaftar atau tidak dapat digunakan.",409,cors(request,env));
+      }
+      const profile={
+        id:authUser.id, username, email, email_verified_at:null, referral_code:"FEZ-"+crypto.randomUUID().replace(/-/g,"").slice(0,10).toUpperCase(),
+        referred_by:referredBy, role:"user", balance:0, reserved_balance:0, disabled:false
+      };
+      try {
+        await rest(env,"profiles","on_conflict=id",{method:"POST",headers:{Prefer:"resolution=merge-duplicates,return=minimal"},body:JSON.stringify(profile)});
+      } catch(profileError) {
+        await sbAdmin(env,"/auth/v1/admin/users/"+encodeURIComponent(authUser.id),{method:"DELETE"}).catch(()=>{});
+        throw profileError;
+      }
+      await audit(env,authUser.id,"account.registration_requested",{email,hasReferral:!!referredBy});
+      return reply({ok:true,needsVerification:true,email,message:"Kode verifikasi telah diminta dikirim ke email kamu. Masukkan kode tersebut untuk mengaktifkan akun."},201,cors(request,env));
     }
-  );
-} catch (profileError) {
-  // Jangan langsung hapus akun Auth; profil mungkin sudah dibuat trigger.
-  const existing = await rest(
-    env,
-    "profiles",
-    "id=eq." + encodeURIComponent(created.id) + "&select=id,username"
-  ).catch(() => []);
-
-  if (!existing.length) {
-    // Avoid leaving an Auth-only account behind when profile creation genuinely failed.
-    await sbAdmin(env,"/auth/v1/admin/users/" + encodeURIComponent(created.id),{method:"DELETE"}).catch(() => {});
-    throw profileError;
-  }
-        }
-      const signedIn = await sb(env,"/auth/v1/token?grant_type=password",{method:"POST",body:JSON.stringify({email:emailFor(username),password})});
-      const createdProfile = (await rest(env,"profiles","id=eq."+encodeURIComponent(created.id)+"&select=*"))[0];
-      return reply({ok:true,message:"Akun berhasil dibuat.",user:safeProfile(createdProfile)},201,{...cors(request,env),"Set-Cookie":cookie(signedIn.access_token,Math.min(86400,Math.max(60,Number(signedIn.expires_in)||3600)))});
+    if((path==="/api/email/verify"||path==="/api/auth/verify-email")&&method==="POST") {
+      const b=await body(request), email=String(b.email||"").trim().toLowerCase(), code=String(b.code||b.token||"").trim();
+      if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)||!/^\d{6,8}$/.test(code)) return fail("Email atau kode verifikasi tidak valid.",400,cors(request,env));
+      const verified=await sb(env,"/auth/v1/verify",{method:"POST",body:JSON.stringify({type:"signup",email,token:code})});
+      const authUser=verified?.user||verified;
+      const accessToken=verified?.access_token||verified?.session?.access_token;
+      if(!authUser?.id||!accessToken) return fail("Kode belum valid atau sudah kedaluwarsa.",400,cors(request,env));
+      const updated=await rest(env,"profiles","id=eq."+encodeURIComponent(authUser.id),{method:"PATCH",headers:{Prefer:"return=representation"},body:JSON.stringify({email:email,email_verified_at:new Date().toISOString()})});
+      let profile=updated?.[0];
+      if(!profile) profile=(await rest(env,"profiles","id=eq."+encodeURIComponent(authUser.id)+"&select=*"))[0];
+      if(!profile||profile.disabled) return fail("Profil akun tidak tersedia.",403,cors(request,env));
+      await audit(env,authUser.id,"account.email_verified",{});
+      return reply({ok:true,user:safeProfile(profile),message:"Email berhasil diverifikasi."},200,{...cors(request,env),"Set-Cookie":cookie(accessToken,Math.min(86400,Math.max(60,Number(verified.expires_in)||3600)))});
+    }
+    if((path==="/api/email/resend"||path==="/api/auth/resend-verification")&&method==="POST") {
+      const b=await body(request), email=String(b.email||"").trim().toLowerCase();
+      if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return fail("Masukkan alamat email yang valid.",400,cors(request,env));
+      await sb(env,"/auth/v1/resend",{method:"POST",body:JSON.stringify({type:"signup",email})});
+      return reply({ok:true,message:"Jika akun menunggu verifikasi, email kode baru telah diminta. Periksa juga folder spam."},200,cors(request,env));
     }
     if((path==="/api/login"||path==="/api/auth/login")&&method==="POST") {
-      const b=await body(request), username=String(b.username||"").trim(), password=String(b.password||"");
-      if(!usernameOK(username)||!password) return fail("Username atau password salah",401);
-      const data=await sb(env,"/auth/v1/token?grant_type=password",{method:"POST",body:JSON.stringify({email:emailFor(username),password})});
+      const b=await body(request), identifier=String(b.email||b.username||"").trim(), password=String(b.password||"");
+      if(!identifier||!password) return fail("Email atau password salah",401,cors(request,env));
+      // Keep legacy username-only accounts accessible while new registrations require email.
+      const loginEmail=identifier.includes("@")?identifier.toLowerCase():emailFor(identifier);
+      const data=await sb(env,"/auth/v1/token?grant_type=password",{method:"POST",body:JSON.stringify({email:loginEmail,password})});
       const rows=await rest(env,"profiles","id=eq."+encodeURIComponent(data.user.id)+"&select=*");
-      if(!rows[0]||rows[0].disabled) return fail("Akun tidak ditemukan atau dinonaktifkan",403);
+      if(!rows[0]||rows[0].disabled) return fail("Akun tidak ditemukan atau dinonaktifkan",403,cors(request,env));
       return reply({ok:true,user:safeProfile(rows[0])},200,{...cors(request,env),"Set-Cookie":cookie(data.access_token,Math.min(86400,Math.max(60,Number(data.expires_in)||3600)))});
     }
     if((path==="/api/logout"||path==="/api/auth/logout")&&method==="POST") return reply({ok:true},200,{...cors(request,env),"Set-Cookie":cookie("",0)});
     if(path==="/api/me"&&method==="GET") {const s=await requireUser(request,env);return reply({user:safeProfile(s.profile)},200,cors(request,env));}
     if(path==="/api/config"&&method==="GET") {
-      const keys=["robuxMin","gamepassRate","usernameRate","danaFee","announcementEnabled","announcementTitle","announcementMessage","announcementUpdatedAt"];
+      const keys=["robuxMin","gamepassRate","usernameRate","danaFee","diamondRate","diamondMin","referralInviterReward","referralInviteeReward","announcementEnabled","announcementTitle","announcementMessage","announcementUpdatedAt"];
       const rows=await rest(env,"settings","key=in.("+keys.join(",")+")&select=key,value");
       const all=Object.fromEntries((rows||[]).map(row=>[row.key,row.value]));
       const settings=Object.fromEntries(keys.map(key=>[key,Object.prototype.hasOwnProperty.call(all,key)?all[key]:null]));
@@ -241,21 +241,50 @@ try {
       if(settings.gamepassRate==null) settings.gamepassRate=170;
       if(settings.usernameRate==null) settings.usernameRate=230;
       if(settings.danaFee==null) settings.danaFee=2000;
+      if(settings.diamondRate==null) settings.diamondRate=0;
+      if(settings.diamondMin==null) settings.diamondMin=1;
+      if(settings.referralInviterReward==null) settings.referralInviterReward=0;
+      if(settings.referralInviteeReward==null) settings.referralInviteeReward=0;
       return reply({captchaRequired:false,settings},200,cors(request,env));
+    }
+    if(path==="/api/announcement/seen"&&method==="POST") {
+      const s=await requireUser(request,env);
+      await rest(env,"profiles","id=eq."+encodeURIComponent(s.user.id),{method:"PATCH",headers:{Prefer:"return=minimal"},body:JSON.stringify({announcement_seen_at:new Date().toISOString()})});
+      return reply({ok:true},200,cors(request,env));
+    }
+    if(path==="/api/referral"&&method==="GET") {
+      const s=await requireUser(request,env);
+      let code=s.profile.referral_code;
+      if(!code) {
+        code="FEZ-"+crypto.randomUUID().replace(/-/g,"").slice(0,10).toUpperCase();
+        await rest(env,"profiles","id=eq."+encodeURIComponent(s.user.id),{method:"PATCH",headers:{Prefer:"return=minimal"},body:JSON.stringify({referral_code:code})});
+      }
+      const [invited,events,settings]=await Promise.all([
+        rest(env,"profiles","referred_by=eq."+encodeURIComponent(s.user.id)+"&select=id,username,created_at"),
+        rest(env,"referral_events","referrer_id=eq."+encodeURIComponent(s.user.id)+"&select=invitee_reward,referrer_reward,created_at,referred_user_id&order=created_at.desc"),
+        rest(env,"settings","key=in.(referralInviterReward,referralInviteeReward)&select=key,value")
+      ]);
+      const cfg=Object.fromEntries((settings||[]).map(row=>[row.key,row.value]));
+      return reply({code,invitedCount:(invited||[]).length,qualifiedCount:(events||[]).length,
+        earned:Number((events||[]).reduce((sum,row)=>sum+Number(row.referrer_reward||0),0)),
+        inviterReward:Number(cfg.referralInviterReward||0),inviteeReward:Number(cfg.referralInviteeReward||0)},200,cors(request,env));
     }
     if(path==="/api/dashboard"&&method==="GET") {
       const s=await requireUser(request,env);
-      const [jobs,submissions,withdrawals]=await Promise.all([
-        rest(env,"jobs","status=eq.active&select=id,title,description,reward,status&order=created_at.desc"),
+      const [submissions,withdrawals]=await Promise.all([
         rest(env,"submissions","user_id=eq."+s.user.id+"&select=id,status&order=created_at.desc"),
         rest(env,"withdrawals","user_id=eq."+s.user.id+"&select=id,status,amount&order=created_at.desc")
       ]);
-      return reply({user:safeProfile(s.profile),jobs,stats:{submissions:submissions.length,withdrawals:withdrawals.length}},200,cors(request,env));
+      return reply({user:safeProfile(s.profile),stats:{submissions:submissions.length,withdrawals:withdrawals.length}},200,cors(request,env));
     }
     if(path==="/api/jobs"&&method==="GET") {
       const rows=await rest(env,"jobs","status=eq.active&select=*&order=created_at.desc");
       const available=(rows||[]).filter(job=>job.quota==null||Number(job.quota_used||0)<Number(job.quota));
       return reply(available,200,cors(request,env));
+    }
+    if(path==="/api/diamond"&&method==="GET") {
+      const s=await requireUser(request,env);
+      return reply(await rest(env,"diamond_requests","user_id=eq."+encodeURIComponent(s.user.id)+"&select=*&order=created_at.desc"),200,cors(request,env));
     }
     if(path==="/api/withdrawals"&&method==="GET") {
       const s=await requireUser(request,env);
@@ -305,18 +334,35 @@ try {
     }
     if(path==="/api/history"&&method==="GET") {
       const s=await requireUser(request,env);
-      const [submissions,withdrawals,robux]=await Promise.all([
+      const [submissions,withdrawals,robux,diamonds]=await Promise.all([
         rest(env,"submissions","user_id=eq."+s.user.id+"&select=*&order=created_at.desc"),
         rest(env,"withdrawals","user_id=eq."+s.user.id+"&select=*&order=created_at.desc"),
-        rest(env,"robux_requests","user_id=eq."+s.user.id+"&select=*&order=created_at.desc")
+        rest(env,"robux_requests","user_id=eq."+s.user.id+"&select=*&order=created_at.desc"),
+        rest(env,"diamond_requests","user_id=eq."+s.user.id+"&select=*&order=created_at.desc")
       ]);
-      return reply({submissions,withdrawals,robux},200,cors(request,env));
+      return reply({submissions,withdrawals,robux,diamonds},200,cors(request,env));
     }
     if(path==="/api/withdrawals"&&method==="POST") {
       const s=await requireUser(request,env), b=await body(request), amount=Number(b.amount);
       if(!Number.isSafeInteger(amount)||amount<=0||amount>Number(s.profile.balance||0)) return fail("Nominal penarikan harus berupa angka bulat positif dan tidak melebihi saldo.");
       const rows=await sb(env,"/rest/v1/rpc/create_withdrawal",{method:"POST",body:JSON.stringify({p_user_id:s.user.id,p_amount:amount,p_method:String(b.method||"").slice(0,50),p_destination:String(b.destination||"").slice(0,200)})});
       return reply({ok:true,result:rows},201,cors(request,env));
+    }
+    if(path==="/api/diamond"&&method==="POST") {
+      const s=await requireUser(request,env), b=await body(request);
+      const diamonds=Number(b.diamonds), uid=String(b.ffUid||b.uid||"").trim(), serverId=String(b.serverId||"").trim();
+      const settings=await rest(env,"settings","key=in.(diamondRate,diamondMin)&select=key,value");
+      const cfg=Object.fromEntries((settings||[]).map(row=>[row.key,row.value]));
+      const rate=Number(cfg.diamondRate||0), min=Math.max(1,Number(cfg.diamondMin||1));
+      if(!Number.isSafeInteger(rate)||rate<1) return fail("Penarikan diamond FF belum diaktifkan admin.",400,cors(request,env));
+      if(!Number.isSafeInteger(diamonds)||diamonds<min||diamonds>1000000) return fail("Jumlah diamond tidak valid. Minimum "+min+" diamond.",400,cors(request,env));
+      if(!/^\d{5,20}$/.test(uid)) return fail("UID Free Fire harus berupa 5–20 angka.",400,cors(request,env));
+      if(serverId && !/^[A-Za-z0-9_-]{1,32}$/.test(serverId)) return fail("ID server tidak valid.",400,cors(request,env));
+      const cost=diamonds*rate;
+      if(!Number.isSafeInteger(cost)||cost>1000000000) return fail("Total biaya diamond tidak valid.",400,cors(request,env));
+      const created=await sb(env,"/rest/v1/rpc/create_diamond_request",{method:"POST",body:JSON.stringify({p_user_id:s.profile.id,p_diamonds:diamonds,p_ff_uid:uid,p_ff_server_id:serverId,p_rate:rate,p_cost:cost})});
+      await audit(env,s.profile.id,"diamond_request_created",{diamonds,rate,cost});
+      return reply({ok:true,request:created,diamonds,rate,cost,message:"Permintaan diamond FF dikirim. Admin akan memproses pengiriman secara manual."},201,cors(request,env));
     }
     if(path==="/api/robux"&&method==="POST") {
       const s=await requireUser(request,env), b=await body(request);
@@ -427,15 +473,16 @@ try {
     if(path==="/api/admin/submissions"&&method==="GET") {await requireAdmin(request,env);return reply(await rest(env,"submissions","select=*&order=created_at.desc"),200,cors(request,env));}
     if(path==="/api/admin/withdrawals"&&method==="GET") {await requireAdmin(request,env);return reply(await rest(env,"withdrawals","select=*&order=created_at.desc"),200,cors(request,env));}
     if(path==="/api/admin/robux"&&method==="GET") {await requireAdmin(request,env);return reply(await rest(env,"robux_requests","select=*&order=created_at.desc"),200,cors(request,env));}
+    if(path==="/api/admin/diamond"&&method==="GET") {await requireAdmin(request,env);return reply(await rest(env,"diamond_requests","select=*&order=created_at.desc"),200,cors(request,env));}
     if(path==="/api/admin/users"&&method==="GET") {await requireAdmin(request,env);return reply(await rest(env,"profiles","select=id,username,role,balance,reserved_balance,disabled,created_at&order=created_at.desc"),200,cors(request,env));}
     if(path==="/api/admin/audit"&&method==="GET") {await requireAdmin(request,env);return reply(await rest(env,"audit_logs","select=*&order=created_at.desc&limit=200"),200,cors(request,env));}
-    m=path.match(/^\/api\/admin\/(submissions|withdrawals|robux)\/([^/]+)\/review$/);
+    m=path.match(/^\/api\/admin\/(submissions|withdrawals|robux|diamond)\/([^/]+)\/review$/);
     if(m&&method==="POST") {
       const s=await requireAdmin(request,env),b=await body(request);
-      const allowed={submissions:["approved","rejected"],withdrawals:["paid","rejected"],robux:["completed","rejected"]};
+      const allowed={submissions:["approved","rejected"],withdrawals:["paid","rejected"],robux:["completed","rejected"],diamond:["completed","rejected"]};
       if(!allowed[m[1]].includes(b.status))return fail("Status tidak valid untuk jenis pengajuan.",400,cors(request,env));
       if(b.status==="rejected"&&!String(b.note||"").trim()) return fail("Alasan penolakan wajib diisi.",400,cors(request,env));
-      const rpc={submissions:["review_submission","p_submission_id"],withdrawals:["review_withdrawal","p_withdrawal_id"],robux:["review_robux_request","p_robux_request_id"]}[m[1]];
+      const rpc={submissions:["review_submission","p_submission_id"],withdrawals:["review_withdrawal","p_withdrawal_id"],robux:["review_robux_request","p_robux_request_id"],diamond:["review_diamond_request","p_diamond_request_id"]}[m[1]];
       const args={ [rpc[1]]:m[2],p_status:b.status,p_note:String(b.note||"").slice(0,1000),p_admin_id:s.user.id};
       const result=await sb(env,"/rest/v1/rpc/"+rpc[0],{method:"POST",body:JSON.stringify(args)});
       await audit(env,s.user.id,"review."+m[1],{id:m[2],status:b.status});
@@ -455,12 +502,13 @@ try {
     }
     if(path==="/api/admin/settings"&&method==="POST") {
       const s=await requireAdmin(request,env),b=await body(request);
-      const allowed=new Set(["robuxMin","gamepassRate","usernameRate","danaFee","maintenanceEnabled","maintenanceReason","maintenanceReopenAt","announcementEnabled","announcementTitle","announcementMessage","announcementUpdatedAt"]);
+      const allowed=new Set(["robuxMin","gamepassRate","usernameRate","danaFee","diamondRate","diamondMin","referralInviterReward","referralInviteeReward","maintenanceEnabled","maintenanceReason","maintenanceReopenAt","announcementEnabled","announcementTitle","announcementMessage","announcementUpdatedAt"]);
       for(const [key,value] of Object.entries(b)) {
         if(!allowed.has(key)) return fail("Kunci pengaturan tidak diizinkan: "+key,400,cors(request,env));
-        if(["robuxMin","gamepassRate","usernameRate","danaFee"].includes(key)) {
+        if(["robuxMin","gamepassRate","usernameRate","danaFee","diamondRate","diamondMin","referralInviterReward","referralInviteeReward"].includes(key)) {
           const n=Number(value);
-          if(!Number.isSafeInteger(n)||n<0||n>1000000000||(key==="robuxMin"&&n<1)||(key!=="danaFee"&&key!=="robuxMin"&&n<1)) return fail("Nilai pengaturan "+key+" tidak valid.",400,cors(request,env));
+          const isReward=key==="referralInviterReward"||key==="referralInviteeReward";
+          if(!Number.isSafeInteger(n)||n<0||n>1000000000||(["robuxMin","diamondMin"].includes(key)&&n<1)||(["gamepassRate","usernameRate"].includes(key)&&n<1)||(!isReward&&key==="robuxMin"&&n<1)) return fail("Nilai pengaturan "+key+" tidak valid.",400,cors(request,env));
         }
         if(["maintenanceEnabled","announcementEnabled"].includes(key)&&typeof value!=="boolean") return fail("Status "+key+" harus berupa boolean.",400,cors(request,env));
         const maxLength={maintenanceReason:1000,announcementTitle:120,announcementMessage:2000,maintenanceReopenAt:80,announcementUpdatedAt:80}[key];
