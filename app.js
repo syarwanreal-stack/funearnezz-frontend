@@ -268,7 +268,7 @@
     state.user = result.user || state.user;
     $('#headerBalance').textContent = cash(wallet.balance == null ? state.user.balance : wallet.balance);
     var jobHtml = (Array.isArray(jobs) ? jobs : []).map(function (job) {
-      return '<article class="job-card"><div class="card-top"><div><h3>' + esc(job.title) + '</h3><p>' + esc(job.description || 'Ikuti instruksi job yang tersedia.') + '</p></div><span class="tag reward">+' + cash(job.reward) + '</span></div><div class="tag-list"><span class="tag">Kuota ' + esc(job.quota_used || 0) + '/' + esc(job.quota == null ? '∞' : job.quota) + '</span><span class="tag">' + (job.photo_required ? 'Foto bukti wajib' : 'Foto bukti opsional') + '</span></div>' +
+      return '<article class="job-card"><div class="card-top"><div><h3>' + esc(job.title) + '</h3><p>' + esc(job.description || 'Ikuti instruksi job yang tersedia.') + '</p></div><span class="tag reward">+' + cash(job.reward) + '</span></div><div class="tag-list"><span class="tag">Kuota ' + esc(job.quota_used || 0) + '/' + esc(job.quota == null ? '∞' : job.quota) + '</span><span class="tag">' + (job.photo_required ? 'Foto bukti wajib' : 'Foto bukti opsional') + '</span><span class="tag">' + (job.allow_repeat ? 'Boleh berulang' : '1 kali per akun') + '</span></div>' +
         (job.link ? '<p><a href="' + esc(job.link) + '" rel="noopener noreferrer" target="_blank" class="text-button">Buka link tugas ↗</a></p>' : '') +
         '<div class="button-row"><button class="button button-primary" type="button" data-job-submit="' + esc(job.id) + '" data-job-title="' + esc(job.title) + '" data-photo="' + String(!!job.photo_required) + '">Kerjakan job</button></div></article>';
     }).join('');
@@ -674,8 +674,14 @@
   var renderCodes = async function () {
     var codes = await api('/api/admin/codes');
     $('#viewRoot').innerHTML = '<section class="panel"><div class="panel-heading"><div><h2>Buat Unickcode</h2><p>Kode dapat dipakai setiap akun satu kali. Setelah batas penerima tercapai, kode otomatis habis.</p></div></div><form id="codeForm" class="form-grid"><label class="field"><span>UNICKCODE</span><input name="code" minlength="2" maxlength="80" required placeholder="Contoh: TESTING"></label><label class="field"><span>JUMLAH REWARD (Rp)</span><input name="reward" type="number" min="1" step="1" required placeholder="1000"></label><label class="field"><span>JUMLAH PENERIMA</span><input name="max_uses" type="number" min="1" step="1" required placeholder="10"></label><div class="wide"><button class="button button-primary" type="submit">Buat kode</button></div></form></section><section class="panel"><div class="panel-heading"><div><h2>Kode yang dibuat</h2></div></div><div class="stack">' + ((codes || []).map(function (code) {
-      return '<article class="code-row"><div><strong>' + esc(code.code) + '</strong><small>Reward ' + cash(code.reward) + ' · Dipakai ' + esc(code.used_count) + '/' + esc(code.max_uses) + '</small></div><span class="status ' + (code.active && Number(code.used_count) < Number(code.max_uses) ? 'success' : 'rejected') + '">' + (code.active && Number(code.used_count) < Number(code.max_uses) ? 'AKTIF' : 'HABIS') + '</span></article>';
+      return '<article class="code-row"><div><strong>' + esc(code.code) + '</strong><small>Reward ' + cash(code.reward) + ' · Dipakai ' + esc(code.used_count) + '/' + esc(code.max_uses) + '</small></div><span class="status ' + (code.active && Number(code.used_count) < Number(code.max_uses) ? 'success' : 'rejected') + '">' + (code.active && Number(code.used_count) < Number(code.max_uses) ? 'AKTIF' : 'NONAKTIF/HABIS') + '</span><button class="button button-secondary" type="button" data-delete-code="' + esc(code.id) + '" data-code-name="' + esc(code.code) + '">Hapus</button></article>';
     }).join('') || '<div class="empty-state">Belum ada kode yang dibuat.</div>') + '</div></section>';
+    $('[data-delete-code]').forEach(function (button) { button.addEventListener('click', async function () {
+      showDialog('Hapus Unickcode?', 'Kode ' + button.dataset.codeName + ' akan dinonaktifkan sehingga tidak bisa dipakai lagi. Riwayat pemakaian tetap disimpan.', { kind: 'warning', onClose: async function () {
+        try { await api('/api/admin/codes/' + encodeURIComponent(button.dataset.deleteCode), { method: 'DELETE' }); await navigate('codes'); say('Unickcode dinonaktifkan.'); }
+        catch (error) { showDialog('Gagal menghapus kode', error.message, { kind: 'error' }); }
+      } });
+    }); });
     $('#codeForm').addEventListener('submit', async function (event) {
       event.preventDefault();
       var form = event.currentTarget, button = $('button[type="submit"]', form); button.disabled = true;
@@ -702,7 +708,8 @@
       if (navigator.clipboard) navigator.clipboard.writeText(inviteUrl).then(function () { say('Link referral disalin.'); }).catch(function () { showDialog('Salin manual', 'Pilih dan salin link referral di kotak.', { kind: 'info' }); });
     });
   };
-  var renderCreateJob = function () {
+  var renderCreateJob = async function () {
+    var jobs = await api('/api/admin/jobs');
     $('#viewRoot').innerHTML = '<section class="panel"><div class="panel-heading"><div><h2>Job baru</h2><p>Kuota menghitung pengajuan yang masih aktif dan yang disetujui. Pengajuan yang ditolak membebaskan satu kuota.</p></div></div><form id="jobCreateForm" class="form-grid">' +
       '<label class="field wide"><span>NAMA JOB</span><input name="title" maxlength="160" required placeholder="Nama pekerjaan"></label>' +
       '<label class="field wide"><span>DESKRIPSI</span><textarea name="description" maxlength="4000" required placeholder="Jelaskan langkah-langkah pengerjaan"></textarea></label>' +
@@ -710,12 +717,23 @@
       '<label class="field"><span>REWARD (Rp)</span><input name="reward" type="number" min="0" step="1" required placeholder="1000"></label>' +
       '<label class="field"><span>KUOTA</span><input name="quota" type="number" min="1" step="1" required placeholder="10"></label>' +
       '<label class="check-row wide"><span>Wajib kirim gambar bukti</span><span class="switch"><input name="photo_required" type="checkbox"><span></span></span></label>' +
-      '<div class="wide"><button class="button button-primary" type="submit">Buat job</button></div></form></section>';
+      '<label class="check-row wide"><span>Izinkan akun yang sama mengerjakan job berulang kali</span><span class="switch"><input name="allow_repeat" type="checkbox"><span></span></span></label>' +
+      '<p class="subtle wide">Jika aktif, akun yang sama boleh mengirim pengajuan berkali-kali selama kuota tersedia. Jika mati, satu akun hanya boleh mengirim satu pengajuan untuk job ini.</p>' +
+      '<div class="wide"><button class="button button-primary" type="submit">Buat job</button></div></form></section>' +
+      '<section class="panel"><div class="panel-heading"><div><h2>Job yang dipublikasikan</h2><p>Hapus akan mengarsipkan job dan mempertahankan riwayat pengajuan.</p></div></div><div class="stack">' + ((jobs || []).map(function (job) {
+        return '<article class="code-row"><div><strong>' + esc(job.title) + '</strong><small>Kuota ' + esc(job.quota_used || 0) + '/' + esc(job.quota == null ? '∞' : job.quota) + ' · ' + (job.allow_repeat ? 'Boleh berulang' : '1 kali per akun') + ' · ' + esc(job.status || 'active') + '</small></div><button class="button button-secondary" type="button" data-delete-job="' + esc(job.id) + '" data-job-name="' + esc(job.title) + '">Hapus</button></article>';
+      }).join('') || '<div class="empty-state">Belum ada job yang dibuat.</div>') + '</div></section>';
+    $('[data-delete-job]').forEach(function (button) { button.addEventListener('click', async function () {
+      showDialog('Hapus job?', 'Job "' + button.dataset.jobName + '" akan diarsipkan dan tidak muncul lagi untuk pengguna. Riwayat pengajuan tetap tersimpan.', { kind: 'warning', onClose: async function () {
+        try { await api('/api/admin/jobs/' + encodeURIComponent(button.dataset.deleteJob), { method: 'DELETE' }); await navigate('create-job'); say('Job diarsipkan.'); }
+        catch (error) { showDialog('Gagal menghapus job', error.message, { kind: 'error' }); }
+      } });
+    }); });
     $('#jobCreateForm').addEventListener('submit', async function (event) {
       event.preventDefault();
       var form = event.currentTarget, button = $('button[type="submit"]', form); button.disabled = true;
       try {
-        await api('/api/admin/jobs', { method: 'POST', body: JSON.stringify({ title: form.title.value.trim(), description: form.description.value.trim(), link: form.link.value.trim(), reward: Number(form.reward.value), quota: Number(form.quota.value), photo_required: form.photo_required.checked }) });
+        await api('/api/admin/jobs', { method: 'POST', body: JSON.stringify({ title: form.title.value.trim(), description: form.description.value.trim(), link: form.link.value.trim(), reward: Number(form.reward.value), quota: Number(form.quota.value), photo_required: form.photo_required.checked, allow_repeat: form.allow_repeat.checked }) });
         showDialog('Job berhasil dibuat', 'Job kini muncul di dashboard pengguna dan kuotanya akan diperbarui otomatis.', { autoMs: 3000 });
         await navigate('create-job');
       } catch (error) { showDialog('Job gagal dibuat', error.message, { kind: 'error' }); }
