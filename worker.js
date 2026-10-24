@@ -278,8 +278,13 @@ async function handle(request,env) {
       return reply({user:safeProfile(s.profile),stats:{submissions:submissions.length,withdrawals:withdrawals.length}},200,cors(request,env));
     }
     if(path==="/api/jobs"&&method==="GET") {
-      const rows=await rest(env,"jobs","status=eq.active&select=*&order=created_at.desc");
-      const available=(rows||[]).filter(job=>job.quota==null||Number(job.quota_used||0)<Number(job.quota));
+      const s=await requireUser(request,env);
+      const [rows, prior] = await Promise.all([
+        rest(env,"jobs","status=eq.active&select=*&order=created_at.desc"),
+        rest(env,"submissions","user_id=eq."+encodeURIComponent(s.user.id)+"&select=job_id")
+      ]);
+      const submitted = new Set((prior||[]).map(item=>String(item.job_id)));
+      const available=(rows||[]).filter(job=>(job.quota==null||Number(job.quota_used||0)<Number(job.quota))&&(job.allow_repeat||!submitted.has(String(job.id))));
       return reply(available,200,cors(request,env));
     }
     if(path==="/api/diamond"&&method==="GET") {
@@ -301,8 +306,12 @@ async function handle(request,env) {
     m=path.match(/^\/api\/jobs\/([^/]+)\/submit$/);
     if(m&&method==="POST") {
       const s=await requireUser(request,env), b=await body(request);
-      const job=(await rest(env,"jobs","id=eq."+encodeURIComponent(m[1])+"&status=eq.active&select=id,reward,photo_required"))[0];
+      const job=(await rest(env,"jobs","id=eq."+encodeURIComponent(m[1])+"&status=eq.active&select=id,reward,photo_required,allow_repeat"))[0];
       if(!job) return fail("Tugas tidak tersedia",404,cors(request,env));
+      if (!job.allow_repeat) {
+        const previous = await rest(env,"submissions","user_id=eq."+encodeURIComponent(s.user.id)+"&job_id=eq."+encodeURIComponent(job.id)+"&select=id&limit=1");
+        if (previous.length) return fail("Job ini hanya boleh dikerjakan satu kali untuk setiap akun.",409,cors(request,env));
+      }
       const file=b.proof;
       let proofPath=null;
       if(file && typeof file.arrayBuffer==="function" && Number.isFinite(file.size) && file.size>0) {
@@ -397,6 +406,13 @@ async function handle(request,env) {
       await requireAdmin(request,env);
       return reply(await rest(env,"unique_codes","select=id,code,reward,max_uses,used_count,active,created_at&order=created_at.desc"),200,cors(request,env));
     }
+    if(method==="DELETE" && path.startsWith("/api/admin/codes/")) {
+      const s=await requireAdmin(request,env), id=encodeURIComponent(decodeURIComponent(path.slice("/api/admin/codes/".length)));
+      const rows=await rest(env,"unique_codes","id=eq."+id+"&select=id,code,active",{method:"PATCH",headers:{Prefer:"return=representation"},body:JSON.stringify({active:false})});
+      if(!rows?.[0]) return fail("Unickcode tidak ditemukan.",404,cors(request,env));
+      await audit(env,s.user.id,"unique_code.disable",{id:rows[0].id,code:rows[0].code});
+      return reply({ok:true,code:rows[0]},200,cors(request,env));
+    }
     if(path==="/api/admin/codes"&&method==="POST") {
       const s=await requireAdmin(request,env),b=await body(request);
       const code=String(b.code||"").trim().toUpperCase(),reward=Number(b.reward),maxUses=Number(b.max_uses);
@@ -456,6 +472,13 @@ async function handle(request,env) {
       return reply({users:users.length,jobs:jobs.length,pending_submissions:subs.length,pending_withdrawals:withdrawals.length,pending_robux:robux.length},200,cors(request,env));
     }
     if(path==="/api/admin/jobs"&&method==="GET") {await requireAdmin(request,env);return reply(await rest(env,"jobs","select=*&order=created_at.desc"),200,cors(request,env));}
+    if(method==="DELETE" && path.startsWith("/api/admin/jobs/")) {
+      const s=await requireAdmin(request,env), id=encodeURIComponent(decodeURIComponent(path.slice("/api/admin/jobs/".length)));
+      const rows=await rest(env,"jobs","id=eq."+id+"&select=id,title,status",{method:"PATCH",headers:{Prefer:"return=representation"},body:JSON.stringify({status:"archived"})});
+      if(!rows?.[0]) return fail("Job tidak ditemukan.",404,cors(request,env));
+      await audit(env,s.user.id,"job.archive",{id:rows[0].id,title:rows[0].title});
+      return reply({ok:true,job:rows[0]},200,cors(request,env));
+    }
     if(path==="/api/admin/jobs"&&method==="POST") {
       const s=await requireAdmin(request,env),b=await body(request);
       const quota=(b.quota===undefined||b.quota===null||b.quota==="")?null:Number(b.quota);
@@ -465,7 +488,7 @@ async function handle(request,env) {
       if(link) { try { const u=new URL(link); if(!["http:","https:"].includes(u.protocol)) return fail("Link job harus memakai HTTP atau HTTPS.",400,cors(request,env)); } catch { return fail("Format link job tidak valid.",400,cors(request,env)); } }
       const rows=await rest(env,"jobs","",{method:"POST",headers:{Prefer:"return=representation"},body:JSON.stringify({
         title:String(b.title).trim().slice(0,160),description:String(b.description||"").slice(0,4000),
-        link,reward:Number(b.reward),quota,quota_used:0,photo_required:!!b.photo_required,status:"active"
+        link,reward:Number(b.reward),quota,quota_used:0,photo_required:!!b.photo_required,allow_repeat:!!b.allow_repeat,status:"active"
       })});
       await audit(env,s.user.id,"job.create",{title:b.title,quota});
       return reply(rows?.[0]||{ok:true},201,cors(request,env));
