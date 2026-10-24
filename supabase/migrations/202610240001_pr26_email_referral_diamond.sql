@@ -7,7 +7,8 @@ alter table public.profiles
   add column if not exists email_verified_at timestamptz,
   add column if not exists referral_code text,
   add column if not exists referred_by uuid references public.profiles(id) on delete set null,
-  add column if not exists referral_awarded_at timestamptz;
+  add column if not exists referral_awarded_at timestamptz,
+  add column if not exists announcement_seen_at timestamptz;
 
 create unique index if not exists profiles_email_lower_uq
   on public.profiles (lower(email)) where email is not null and length(trim(email)) > 0;
