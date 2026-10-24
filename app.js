@@ -180,17 +180,19 @@
     } catch (e) { state.maintenance = { enabled: false }; }
   };
   var showAnnouncement = async function () {
-    if (!state.user) return;
+    if (!state.user || state.user.announcement_seen_at) return;
     try {
       var cfg = await getConfig();
       if (!(String(cfg.announcementEnabled) === 'true' || cfg.announcementEnabled === true)) return;
-      var key = String(cfg.announcementUpdatedAt || cfg.announcementMessage || '');
-      if (!key) return;
-      var storageKey = 'fe_announcement_seen:' + String(state.user.id || state.user.username) + ':' + key;
+      var message = String(cfg.announcementMessage || '').trim();
+      if (!message) return;
+      var storageKey = 'fe_announcement_seen:' + String(state.user.id || state.user.username);
       try { if (localStorage.getItem(storageKey) === '1') return; } catch (e) {}
       if (state.maintenance && state.maintenance.enabled) return;
       try { localStorage.setItem(storageKey, '1'); } catch (e) {}
-      showDialog(String(cfg.announcementTitle || 'Pengumuman'), String(cfg.announcementMessage || 'Ada informasi baru.'), { autoMs: 6000 });
+      state.user.announcement_seen_at = new Date().toISOString();
+      showDialog(String(cfg.announcementTitle || 'Pengumuman'), message, { autoMs: 6000 });
+      api('/api/announcement/seen', { method: 'POST', body: '{}' }).catch(function () { /* local storage prevents repeated popups on this device */ });
     } catch (e) { /* pengumuman gagal dimuat tidak memblokir login */ }
   };
   var closeMenu = function () {
