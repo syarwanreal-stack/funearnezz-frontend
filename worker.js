@@ -92,7 +92,7 @@ const body = async req => {
 };
 const usernameOK = u => typeof u==="string" && /^[A-Za-z0-9_]{3,24}$/.test(u);
 const emailFor = u => u.toLowerCase()+"@"+AUTH_HOST;
-const safeProfile = p => p ? ({id:p.id, username:p.username, email:p.email||null, email_verified_at:p.email_verified_at||null, emailVerified:!!p.email_verified_at, referral_code:p.referral_code||null, role:p.role, balance:Number(p.balance||0), reserved_balance:Number(p.reserved_balance||0), created_at:p.created_at}) : null;
+const safeProfile = p => p ? ({id:p.id, username:p.username, email:p.email||null, email_verified_at:p.email_verified_at||null, emailVerified:!!p.email_verified_at, referral_code:p.referral_code||null, announcement_seen_at:p.announcement_seen_at||null, role:p.role, balance:Number(p.balance||0), reserved_balance:Number(p.reserved_balance||0), created_at:p.created_at}) : null;
 async function current(request, env) {
   const token = parseCookies(request)[COOKIE] || (request.headers.get("Authorization")||"").replace(/^Bearer\s+/i,"");
   if (!token) return null;
@@ -246,6 +246,11 @@ async function handle(request,env) {
       if(settings.referralInviterReward==null) settings.referralInviterReward=0;
       if(settings.referralInviteeReward==null) settings.referralInviteeReward=0;
       return reply({captchaRequired:false,settings},200,cors(request,env));
+    }
+    if(path==="/api/announcement/seen"&&method==="POST") {
+      const s=await requireUser(request,env);
+      await rest(env,"profiles","id=eq."+encodeURIComponent(s.user.id),{method:"PATCH",headers:{Prefer:"return=minimal"},body:JSON.stringify({announcement_seen_at:new Date().toISOString()})});
+      return reply({ok:true},200,cors(request,env));
     }
     if(path==="/api/referral"&&method==="GET") {
       const s=await requireUser(request,env);
