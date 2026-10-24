@@ -55,7 +55,7 @@ const sb = async (env, path, init={}) => {
   if (!isAuthEndpoint && (serverKey.match(/\./g) || []).length === 2) authHeaders.Authorization = `Bearer ${serverKey}`;
   const res = await fetch(base + path, { ...init, headers: {
     ...authHeaders,
-    "Content-Type":"application/json",
+    ...(init.body !== undefined ? {"Content-Type":"application/json"} : {}),
     ...(init.headers||{})
   }});
   const raw = await res.text();
@@ -73,7 +73,7 @@ const sbAdmin = async (env, path, init={}) => {
   if ((serverKey.match(/\./g) || []).length === 2) headers.Authorization = `Bearer ${serverKey}`;
   const res = await fetch(base + path, { ...init, headers: {
     ...headers,
-    "Content-Type":"application/json",
+    ...(init.body !== undefined ? {"Content-Type":"application/json"} : {}),
     ...(init.headers||{})
   }});
   const raw = await res.text();
