@@ -300,7 +300,7 @@ test("schema and additive PR #26 migration define all RPCs used by Worker", asyn
   assert.match(migration, /referral_events_one_award_per_invitee/);
   assert.match(migration, /email_verified_at IS NULL/i);
   assert.match(migration, /diamond_requests/);
-  assert.doesNotMatch(migration, /DROP\\s+TABLE/i, "migration must preserve production tables");
+  assert.doesNotMatch(migration, /DROP\s+TABLE/i, "migration must preserve production tables");
   assert.match(sql, /submission-proofs[^;]*false/s, "proof bucket must not be public");
   assert.match(sql, /enable row level security/i);
 });
