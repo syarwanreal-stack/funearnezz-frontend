@@ -2,7 +2,7 @@
 (function () {
   var $ = function (selector, root) { return (root || document).querySelector(selector); };
   var $$ = function (selector, root) { return Array.prototype.slice.call((root || document).querySelectorAll(selector)); };
-  var state = { user: null, view: 'dashboard', config: {}, data: {}, maintenance: null, dialogTimer: null, pendingCount: null, notificationReady: false, pollTimer: null, chatTimer: null, maintenanceTimer: null, liveTimer: null, pendingEmail: '' };
+  var state = { user: null, view: 'dashboard', config: {}, data: {}, maintenance: null, maintenanceAcknowledged: false, dialogTimer: null, pendingCount: null, notificationReady: false, pollTimer: null, chatTimer: null, maintenanceTimer: null, liveTimer: null, pendingEmail: '' };
   var viewMeta = {
     dashboard: ['RUANG KAMU', 'Dashboard', 'Pantau saldo dan tugas yang tersedia.'],
     history: ['AKTIVITAS', 'Riwayat', 'Catatan saldo masuk, saldo keluar, dan status pengajuan.'],
@@ -193,12 +193,21 @@
       if (data.enabled) {
         var suffix = data.reopenAt ? '\nPerkiraan dibuka kembali: ' + date(data.reopenAt) : '';
         var heading = $('#dialogLayer .dialog-card h2');
-        var locked = state.user.role !== 'admin';
+        var isOwner = String(state.user.username || '').trim().toLowerCase() === 'wann';
+        var privileged = state.user.role === 'admin' || isOwner;
+        var locked = !privileged;
+        if (privileged && state.maintenanceAcknowledged) return;
         if ($('#dialogLayer').classList.contains('hidden') || !heading || heading.textContent !== 'Website sedang maintenance' || $('#dialogLayer').dataset.maintenanceLocked !== String(locked)) {
-          showDialog('Website sedang maintenance', (data.reason || 'Sistem sedang dalam pemeliharaan.') + suffix, { locked: locked, kind: 'warning', icon: '⚙' });
+          showDialog('Website sedang maintenance', (data.reason || 'Sistem sedang dalam pemeliharaan.') + suffix, {
+            locked: locked, kind: 'warning', icon: '⚙',
+            onClose: privileged ? function () { state.maintenanceAcknowledged = true; } : null
+          });
           $('#dialogLayer').dataset.maintenanceLocked = String(locked);
         }
-      } else if ($('#dialogLayer .dialog-card h2') && $('#dialogLayer .dialog-card h2').textContent === 'Website sedang maintenance') closeDialog();
+      } else {
+        state.maintenanceAcknowledged = false;
+        if ($('#dialogLayer .dialog-card h2') && $('#dialogLayer .dialog-card h2').textContent === 'Website sedang maintenance') closeDialog();
+      }
     } catch (e) { state.maintenance = { enabled: false }; }
   };
   var showAnnouncement = async function () {
